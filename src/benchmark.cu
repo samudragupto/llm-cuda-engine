@@ -3,6 +3,7 @@
 #include "kernels.cuh"
 #include "mem_pool.h"
 #include "tensor.h"
+#include <cublas_v2.h>
 
 struct Timer {
     cudaEvent_t s, e;
@@ -21,19 +22,49 @@ struct Timer {
 void bench_gemm(MemPool& pool, int M, int N, int K, int iters) {
     Tensor A(pool, {M, K}), B(pool, {K, N}), C(pool, {M, N});
     A.fill(1.0f); B.fill(0.5f);
-    Timer t;
+    
+    cublasHandle_t handle;
+    cublasCreate(&handle);
+
+    // --- WARMUP ---
+    // Run everything a few times so the GPU is awake and cuBLAS is initialized
+    for (int i = 0; i < 5; i++) {
+        k_gemm_naive(A.data, B.data, C.data, M, N, K);
+        k_gemm_tiled(A.data, B.data, C.data, M, N, K);
+        k_cublas_gemm(handle, A.data, B.data, C.data, M, N, K);
+    }
     cudaDeviceSynchronize();
+    // --------------
+
+    Timer t;
+    
+    // Naive
     t.start();
     for (int i = 0; i < iters; i++) k_gemm_naive(A.data, B.data, C.data, M, N, K);
     float ms_naive = t.stop() / iters;
+    
+    // Tiled
     t.start();
     for (int i = 0; i < iters; i++) k_gemm_tiled(A.data, B.data, C.data, M, N, K);
     float ms_tiled = t.stop() / iters;
+
+    // cuBLAS
+    t.start();
+    for (int i = 0; i < iters; i++) k_cublas_gemm(handle, A.data, B.data, C.data, M, N, K);
+    float ms_cublas = t.stop() / iters;
+
+    cublasDestroy(handle);
+
     double flops = 2.0 * M * N * K;
     printf("GEMM [%d x %d x %d]\n", M, N, K);
-    printf("  Naive : %8.3f ms | %7.1f GFLOPS\n", ms_naive, flops / (ms_naive * 1e6));
-    printf("  Tiled : %8.3f ms | %7.1f GFLOPS\n", ms_tiled, flops / (ms_tiled * 1e6));
-    printf("  Speedup: %.2fx\n\n", ms_naive / ms_tiled);
+    printf("  Naive  : %8.3f ms | %7.1f GFLOPS\n", ms_naive, flops / (ms_naive * 1e6));
+    printf("  Tiled  : %8.3f ms | %7.1f GFLOPS\n", ms_tiled, flops / (ms_tiled * 1e6));
+    printf("  cuBLAS : %8.3f ms | %7.1f GFLOPS\n", ms_cublas, flops / (ms_cublas * 1e6));
+    printf("  Speedup vs Naive: %.2fx\n", ms_naive / ms_tiled);
+    
+    // Fixed math to properly show Custom relative to cuBLAS
+    // If Custom is 1ms and cuBLAS is 0.1ms, Custom is 0.1x the speed of cuBLAS.
+    printf("  Custom vs cuBLAS: %.2fx (1.0 = equal)\n\n", ms_cublas / ms_tiled); 
 }
 
 void bench_elementwise(MemPool& pool, int n, int iters) {

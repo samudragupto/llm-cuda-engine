@@ -1,5 +1,6 @@
 #pragma once
 #include <cuda_fp16.h>
+#include <cublas_v2.h>
 
 void k_add(float* a, float* b, float* c, int n);
 void k_mul(float* a, float* b, float* c, int n);
@@ -40,3 +41,6 @@ void k_sample_top_p(float* probs, int* out_idx, float p, float random_val, int v
 
 // NEW Phase 3 Upgrade: Repetition Penalty
 void k_apply_repetition_penalty(float* logits, int* past_tokens, int num_past, float penalty);
+// --- PHASE 4 UPGRADES: cuBLAS Baseline ---
+
+void k_cublas_gemm(cublasHandle_t handle, float* A, float* B, float* C, int M, int N, int K);

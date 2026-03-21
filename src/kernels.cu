@@ -293,3 +293,20 @@ void k_sample_top_p(float* probs, int* out_idx, float p, float random_val, int v
 void k_apply_repetition_penalty(float* logits, int* past_tokens, int num_past, float penalty) {
     _apply_repetition_penalty<<<(num_past+255)/256, 256>>>(logits, past_tokens, num_past, penalty);
 }
+// --- PHASE 4 UPGRADES: cuBLAS Baseline ---
+void k_cublas_gemm(cublasHandle_t handle, float* A, float* B, float* C, int M, int N, int K) {
+    float alpha = 1.0f;
+    float beta = 0.0f;
+    
+    // Note: cuBLAS uses column-major order by default.
+    // Our custom kernels assume row-major. 
+    // To do C = A * B in row-major, we compute C^T = B^T * A^T in column-major.
+    // That means we swap A and B in the cublasSgemm call and tell it not to transpose them.
+    cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N,
+                N, M, K,
+                &alpha,
+                B, N,
+                A, K,
+                &beta,
+                C, N);
+}
