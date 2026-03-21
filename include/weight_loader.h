@@ -100,40 +100,22 @@ struct SafetensorsLoader {
         }
     }
 
-    float fp16_to_fp32(uint16_t h) {
-        uint32_t sign = (h >> 15) & 1;
-        uint32_t exp = (h >> 10) & 0x1F;
-        uint32_t mant = h & 0x3FF;
-        uint32_t f;
-        if (exp == 0) {
-            if (mant == 0) f = sign << 31;
-            else {
-                exp = 1;
-                while (!(mant & 0x400)) { mant <<= 1; exp--; }
-                mant &= 0x3FF;
-                f = (sign << 31) | ((exp + 112) << 23) | (mant << 13);
-            }
-        } else if (exp == 31) {
-            f = (sign << 31) | 0x7F800000 | (mant << 13);
-        } else {
-            f = (sign << 31) | ((exp + 112) << 23) | (mant << 13);
+    // ROBUSTNESS UPGRADE: Validate shape before loading
+    bool validate_shape(const std::string& name, const std::vector<int>& expected) {
+        auto it = entries.find(name);
+        if (it == entries.end()) return false; // Doesn't exist
+        const auto& actual = it->second.shape;
+        if (actual.size() != expected.size()) return false;
+        for (size_t i = 0; i < actual.size(); i++) {
+            if (actual[i] != expected[i]) return false;
         }
-        float result;
-        memcpy(&result, &f, 4);
-        return result;
-    }
-
-    float bf16_to_fp32(uint16_t h) {
-        uint32_t f = (uint32_t)h << 16;
-        float result;
-        memcpy(&result, &f, 4);
-        return result;
+        return true;
     }
 
     Tensor load_tensor(const std::string& name, MemPool& pool) {
         auto it = entries.find(name);
         if (it == entries.end()) {
-            fprintf(stderr, "Tensor '%s' not found\n", name.c_str());
+            fprintf(stderr, "[FATAL] Tensor '%s' not found in safetensors.\n", name.c_str());
             exit(1);
         }
         Entry& e = it->second;
@@ -142,20 +124,8 @@ struct SafetensorsLoader {
 
         if (e.dtype == "F32") {
             CUDA_CHECK(cudaMemcpy(t.data, raw.data() + e.offset_start, bytes, cudaMemcpyHostToDevice));
-        } else if (e.dtype == "F16") {
-            size_t n = bytes / 2;
-            std::vector<float> fp32(n);
-            uint16_t* src = (uint16_t*)(raw.data() + e.offset_start);
-            for (size_t i = 0; i < n; i++) fp32[i] = fp16_to_fp32(src[i]);
-            CUDA_CHECK(cudaMemcpy(t.data, fp32.data(), n * sizeof(float), cudaMemcpyHostToDevice));
-        } else if (e.dtype == "BF16") {
-            size_t n = bytes / 2;
-            std::vector<float> fp32(n);
-            uint16_t* src = (uint16_t*)(raw.data() + e.offset_start);
-            for (size_t i = 0; i < n; i++) fp32[i] = bf16_to_fp32(src[i]);
-            CUDA_CHECK(cudaMemcpy(t.data, fp32.data(), n * sizeof(float), cudaMemcpyHostToDevice));
         } else {
-            fprintf(stderr, "Unsupported dtype: %s\n", e.dtype.c_str());
+            fprintf(stderr, "[FATAL] Unsupported dtype '%s' for tensor '%s'. Require F32.\n", e.dtype.c_str(), name.c_str());
             exit(1);
         }
         return t;
