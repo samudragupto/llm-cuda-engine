@@ -160,6 +160,58 @@ __global__ void _attention_weighted_sum_one(float* p,float* V,float* o,int len,i
     }
 }
 
+// --- PHASE 2 UPGRADES ---
+
+// SwiGLU: out = SiLU(gate) * up
+__global__ void _swiglu(float* gate, float* up, float* out, int n){
+    int i=blockIdx.x*blockDim.x+threadIdx.x;
+    if(i<n){
+        float g = gate[i];
+        float silu = g / (1.0f + expf(-g));
+        out[i] = silu * up[i];
+    }
+}
+
+// Multi-Head Attention Scores + Fused Causal Mask
+// Q, K: [seq, n_heads, head_dim] -> S: [n_heads, seq, seq]
+__global__ void _mha_scores_fused_mask(float* Q, float* K, float* S, int seq, int n_heads, int head_dim){
+    int h = blockIdx.z;
+    int r = blockIdx.y; // seq query pos
+    int c = blockIdx.x * blockDim.x + threadIdx.x; // seq key pos
+    
+    if(h < n_heads && r < seq && c < seq){
+        if (c > r) { // Fused Causal Mask
+            S[h*seq*seq + r*seq + c] = -1e20f;
+            return;
+        }
+        float sum = 0.0f;
+        int q_base = r * (n_heads * head_dim) + h * head_dim;
+        int k_base = c * (n_heads * head_dim) + h * head_dim;
+        for(int d=0; d<head_dim; d++){
+            sum += Q[q_base + d] * K[k_base + d];
+        }
+        S[h*seq*seq + r*seq + c] = sum / sqrtf((float)head_dim);
+    }
+}
+
+// Multi-Head Attention Output
+// P: [n_heads, seq, seq], V: [seq, n_heads, head_dim] -> O: [seq, n_heads, head_dim]
+__global__ void _mha_weighted_sum(float* P, float* V, float* O, int seq, int n_heads, int head_dim){
+    int h = blockIdx.z;
+    int r = blockIdx.y; // seq pos
+    int d = blockIdx.x * blockDim.x + threadIdx.x; // head_dim
+    
+    if(h < n_heads && r < seq && d < head_dim){
+        float sum = 0.0f;
+        for(int c=0; c<seq; c++){
+            int p_idx = h*seq*seq + r*seq + c;
+            int v_idx = c*(n_heads*head_dim) + h*head_dim + d;
+            sum += P[p_idx] * V[v_idx];
+        }
+        O[r*(n_heads*head_dim) + h*head_dim + d] = sum;
+    }
+}
+
 void k_add(float* a,float* b,float* c,int n){_add<<<(n+255)/256,256>>>(a,b,c,n);}
 void k_mul(float* a,float* b,float* c,int n){_mul<<<(n+255)/256,256>>>(a,b,c,n);}
 void k_scale(float* a,float s,float* c,int n){_scale<<<(n+255)/256,256>>>(a,s,c,n);}
@@ -182,3 +234,14 @@ void k_row_add_bias(float* x,float* b,int rows,int cols){dim3 g((cols+255)/256,r
 void k_copy_row_to_cache(float* src_row,float* cache,int pos,int dim){_copy_row_to_cache<<<(dim+255)/256,256>>>(src_row,cache,pos,dim);}
 void k_attention_scores_one(float* q,float* K,float* s,int len,int dim){_attention_scores_one<<<(len+255)/256,256>>>(q,K,s,len,dim);}
 void k_attention_weighted_sum_one(float* p,float* V,float* o,int len,int dim){_attention_weighted_sum_one<<<(dim+255)/256,256>>>(p,V,o,len,dim);}
+void k_swiglu(float* gate, float* up, float* out, int n){ _swiglu<<<(n+255)/256, 256>>>(gate,up,out,n); }
+
+void k_mha_scores_fused_mask(float* Q, float* K, float* S, int seq, int n_heads, int head_dim){
+    dim3 g((seq+31)/32, seq, n_heads), b(32);
+    _mha_scores_fused_mask<<<g,b>>>(Q,K,S,seq,n_heads,head_dim);
+}
+
+void k_mha_weighted_sum(float* P, float* V, float* O, int seq, int n_heads, int head_dim){
+    dim3 g((head_dim+31)/32, seq, n_heads), b(32);
+    _mha_weighted_sum<<<g,b>>>(P,V,O,seq,n_heads,head_dim);
+}

@@ -88,7 +88,6 @@ void test_gemm_naive_vs_tiled(MemPool& pool) {
         if (d > maxdiff) maxdiff = d;
     }
     check("naive vs tiled match", maxdiff < 0.1f);
-    printf("    max diff: %e\n", maxdiff);
 }
 
 void test_transpose(MemPool& pool) {
@@ -102,4 +101,32 @@ void test_transpose(MemPool& pool) {
     bool ok = true;
     for (int i = 0; i < 12; i++) if (fabsf(hB[i] - expected[i]) > 1e-5f) { ok = false; break; }
     check("transpose 3x4", ok);
+}
+
+void test_swiglu(MemPool& pool) {
+    Tensor gate(pool, {2}), up(pool, {2}), out(pool, {2});
+    std::vector<float> hg = {0.0f, 2.0f}, hu = {1.0f, 3.0f};
+    gate.from_host(hg); up.from_host(hu);
+    k_swiglu(gate.data, up.data, out.data, 2);
+    cudaDeviceSynchronize();
+    std::vector<float> ho; out.to_host(ho);
+    float exp0 = 0.0f * (1.0f/(1.0f+expf(0.0f))) * 1.0f;
+    float exp1 = 2.0f * (1.0f/(1.0f+expf(-2.0f))) * 3.0f;
+    check("swiglu FFN", fabsf(ho[0] - exp0) < 1e-4 && fabsf(ho[1] - exp1) < 1e-4);
+}
+
+void test_mha(MemPool& pool) {
+    int seq=2, n_heads=2, head_dim=2;
+    Tensor Q(pool, {seq, n_heads, head_dim}), K(pool, {seq, n_heads, head_dim}), V(pool, {seq, n_heads, head_dim});
+    Tensor S(pool, {n_heads, seq, seq}), P(pool, {n_heads, seq, seq}), O(pool, {seq, n_heads, head_dim});
+    Q.fill(1.0f); K.fill(1.0f); V.fill(1.0f);
+    
+    k_mha_scores_fused_mask(Q.data, K.data, S.data, seq, n_heads, head_dim);
+    k_row_softmax(S.data, P.data, n_heads*seq, seq);
+    k_mha_weighted_sum(P.data, V.data, O.data, seq, n_heads, head_dim);
+    cudaDeviceSynchronize();
+    
+    std::vector<float> hs; S.to_host(hs);
+    bool masked = (hs[1] < -1e10f); // head 0, row 0, col 1 should be masked
+    check("mha fused mask", masked);
 }

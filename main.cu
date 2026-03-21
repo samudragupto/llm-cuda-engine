@@ -20,6 +20,8 @@ extern void test_gemm_small(MemPool&);
 extern void test_gemm_large(MemPool&);
 extern void test_gemm_naive_vs_tiled(MemPool&);
 extern void test_transpose(MemPool&);
+extern void test_swiglu(MemPool&);
+extern void test_mha(MemPool&);
 extern void test_safetensors(const char*, MemPool&);
 extern int tests_passed, tests_failed;
 
@@ -49,6 +51,8 @@ int main(int argc, char** argv) {
     test_gemm_large(pool); pool.reset();
     test_gemm_naive_vs_tiled(pool); pool.reset();
     test_transpose(pool); pool.reset();
+    test_swiglu(pool); pool.reset();
+    test_mha(pool); pool.reset();
     printf("\nResults: %d passed, %d failed\n\n", tests_passed, tests_failed);
 
     test_rmsnorm(pool); pool.reset();
