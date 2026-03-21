@@ -2,7 +2,6 @@
 #include <vector>
 #include <cuda_fp16.h>
 #include "mem_pool.h"
-#include "cuda_check.h"
 
 struct HalfTensor {
     half* data;

@@ -53,7 +53,9 @@ void TinyModel::init(){
     for(int i=0;i<layers;i++)blocks[i]->init();
 }
 
-void TinyModel::embed(MemPool& scratch, IntTensor& ids, Tensor& x, int seq_len){k_embedding_lookup(ids.data,tok_embed.data,x.data,seq_len,dim);}
+void TinyModel::embed(MemPool& scratch, IntTensor& ids, Tensor& x, int seq_len){
+    k_embedding_lookup(ids.data,tok_embed.data,x.data,seq_len,dim);
+}
 
 void TinyModel::forward_full(MemPool& scratch, IntTensor& ids, Tensor& logits, int seq_len){
     Tensor x(scratch,{seq_len,dim}),tmp(scratch,{seq_len,dim});
@@ -148,10 +150,9 @@ std::vector<int> TinyModel::generate_cached(MemPool& scratch, const std::vector<
     scratch.reset();
     Tensor last_hidden(scratch,{1,dim});
     prefill(scratch,prompt,last_hidden);
-    scratch.reset();
-    Tensor hidden0(scratch,{1,dim});
-    CUDA_CHECK(cudaMemcpy(hidden0.data,last_hidden.data,dim*sizeof(float),cudaMemcpyDeviceToDevice));
-    int nxt=logits_to_token(scratch,hidden0);
+    Tensor keep(scratch,{1,dim});
+    CUDA_CHECK(cudaMemcpy(keep.data,last_hidden.data,dim*sizeof(float),cudaMemcpyDeviceToDevice));
+    int nxt=logits_to_token(scratch,keep);
     ids.push_back(nxt);
     for(int t=1;t<max_new_tokens;t++){
         int pos=(int)ids.size()-1;
@@ -162,29 +163,119 @@ std::vector<int> TinyModel::generate_cached(MemPool& scratch, const std::vector<
     return ids;
 }
 
-TransformerBlockFP16::TransformerBlockFP16(MemPool& pool,int s,int d,int h):
-    dim(d),hidden_dim(h),seq(s),
-    w_rms1(pool,{d}),w_rms2(pool,{d}),
-    Wq(pool,{d,d}),Wk(pool,{d,d}),Wv(pool,{d,d}),Wo(pool,{d,d}),
-    W1(pool,{d,h}),W2(pool,{h,d}) {}
-
-void TransformerBlockFP16::init(){
-    w_rms1.fill(1.0f); w_rms2.fill(1.0f);
-    Tensor fq(*(MemPool*)nullptr,{});
+void test_embedding(MemPool& pool){
+    Tensor table(pool,{4,3}),out(pool,{2,3});
+    IntTensor ids(pool,2);
+    std::vector<float> h={1,2,3,4,5,6,7,8,9,10,11,12};
+    std::vector<int> hi={2,0};
+    table.from_host(h); ids.from_host(hi);
+    k_embedding_lookup(ids.data,table.data,out.data,2,3);
+    cudaDeviceSynchronize();
+    std::vector<float> ho; out.to_host(ho);
+    bool ok=ho[0]==7&&ho[1]==8&&ho[2]==9&&ho[3]==1&&ho[4]==2&&ho[5]==3;
+    chk3("embedding_lookup",ok);
 }
 
-TinyModelFP16::TinyModelFP16(MemPool& model_pool,int v,int s,int d,int h,int l):
-    vocab(v),max_seq(s),dim(d),hidden(h),layers(l),
-    tok_embed(model_pool,{v,d}),lm_head(model_pool,{d,v}),lm_bias(model_pool,{v}) {
-    for(int i=0;i<layers;i++) blocks.push_back(new TransformerBlockFP16(model_pool,max_seq,dim,hidden));
-    for(int i=0;i<layers;i++) caches.push_back(new LayerCacheFP16(model_pool,max_seq,dim));
+void test_argmax(MemPool& pool){
+    Tensor x(pool,{1,5});
+    IntTensor out(pool,1);
+    std::vector<float> h={1,9,3,2,8};
+    x.from_host(h);
+    k_argmax_row(x.data,out.data,1,5);
+    cudaDeviceSynchronize();
+    std::vector<int> ho; out.to_host(ho);
+    chk3("argmax",ho[0]==1);
 }
 
-void TinyModelFP16::init(){
-    std::vector<float> te(vocab*dim),lh(dim*vocab),lb(vocab);
-    for(size_t i=0;i<te.size();i++)te[i]=0.02f*((int)(i%23)-11);
-    for(size_t i=0;i<lh.size();i++)lh[i]=0.02f*((int)(i%19)-9);
-    for(size_t i=0;i<lb.size();i++)lb[i]=0.001f*((int)(i%7)-3);
+void test_tiny_tokenizer(){
+    TinyTokenizer tok;
+    auto ids=tok.encode("hello world cuda");
+    std::string s=tok.decode(ids);
+    bool ok=ids.size()==3&&s=="hello world cuda";
+    chk3("tiny_tokenizer",ok);
+}
 
-    Tensor fte(*(MemPool*)nullptr,{}),flh(*(MemPool*)nullptr,{}),flb(*(MemPool*)nullptr,{});
+void test_tiny_model(MemPool& model_pool, MemPool& scratch){
+    TinyModel m(model_pool,32,8,32,64,2);
+    m.init();
+    std::vector<int> prompt={3,4,7};
+    int nxt=m.generate_next_full(scratch,prompt);
+    bool ok=nxt>=0&&nxt<32;
+    chk3("tiny_model_generate_next",ok);
+}
+
+void test_kv_cache_equivalence(MemPool& model_pool, MemPool& scratch){
+    TinyModel m(model_pool,32,12,32,64,2);
+    m.init();
+    std::vector<int> prompt={3,4,7};
+    auto a=m.generate_full(scratch,prompt,3);
+    scratch.reset();
+    MemPool model_pool2(512ULL*1024*1024);
+    TinyModel m2(model_pool2,32,12,32,64,2);
+    m2.init();
+    auto b=m2.generate_cached(scratch,prompt,3);
+    bool ok=a.size()==b.size();
+    if(ok) for(int i=0;i<(int)a.size();i++) if(a[i]!=b[i]) { ok=false; break; }
+    chk3("kv_cache_equivalence",ok);
+}
+
+struct Tm3{
+    cudaEvent_t s,e;
+    Tm3(){cudaEventCreate(&s);cudaEventCreate(&e);}
+    ~Tm3(){cudaEventDestroy(s);cudaEventDestroy(e);}
+    void st(){cudaEventRecord(s);}
+    float ed(){cudaEventRecord(e);cudaEventSynchronize(e);float ms;cudaEventElapsedTime(&ms,s,e);return ms;}
+};
+
+void bench_phase3(MemPool& model_pool, MemPool& scratch){
+    TinyModel m(model_pool,1000,32,64,128,2);
+    m.init();
+    std::vector<int> prompt={3,4,5,6,7};
+    Tm3 t;
+    int it=20;
+    cudaDeviceSynchronize();
+    t.st();
+    for(int i=0;i<it;i++){
+        int nxt=m.generate_next_full(scratch,prompt);
+        (void)nxt;
+    }
+    float ms=t.ed()/it;
+    float tok_s=1000.0f/ms;
+    printf("=== PHASE 3 TESTS ===\n");
+    printf("Results: %d passed, %d failed\n\n",p3_pass,p3_fail);
+    printf("=== PHASE 3 BENCHMARKS ===\n");
+    printf("TinyModel full-recompute next: %.4f ms/token | %.2f tok/s\n\n",ms,tok_s);
+}
+
+void bench_phase4a(MemPool& model_pool, MemPool& scratch){
+    int it=20;
+    std::vector<int> prompt={3,4,5,6,7,8,9,10};
+    Tm3 t;
+
+    cudaDeviceSynchronize();
+    t.st();
+    for(int i=0;i<it;i++){
+        MemPool mp(512ULL*1024*1024);
+        TinyModel a(mp,1000,32,64,128,2);
+        a.init();
+        auto out=a.generate_full(scratch,prompt,8);
+        (void)out;
+    }
+    float ms_full=t.ed()/it;
+
+    cudaDeviceSynchronize();
+    t.st();
+    for(int i=0;i<it;i++){
+        MemPool mp(512ULL*1024*1024);
+        TinyModel b(mp,1000,32,64,128,2);
+        b.init();
+        auto out=b.generate_cached(scratch,prompt,8);
+        (void)out;
+    }
+    float ms_cached=t.ed()/it;
+
+    printf("=== PHASE 4A BENCHMARKS ===\n");
+    printf("Full recompute generate: %.4f ms\n",ms_full);
+    printf("KV cache generate      : %.4f ms\n",ms_cached);
+    printf("Speedup                : %.2fx\n\n",ms_full/ms_cached);
 }

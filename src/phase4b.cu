@@ -27,12 +27,12 @@ void TransformerBlockH::init(){
     MemPool tmp(64ULL*1024*1024);
     Tensor fq(tmp,{dim,dim}),fk(tmp,{dim,dim}),fv(tmp,{dim,dim}),fo(tmp,{dim,dim}),f1(tmp,{dim,hidden_dim}),f2(tmp,{hidden_dim,dim});
     fq.from_host(hq); fk.from_host(hk); fv.from_host(hv); fo.from_host(ho); f1.from_host(h1); f2.from_host(h2);
-    k_fp32_to_fp16(fq.data,Wq.data,Wq.numel);
-    k_fp32_to_fp16(fk.data,Wk.data,Wk.numel);
-    k_fp32_to_fp16(fv.data,Wv.data,Wv.numel);
-    k_fp32_to_fp16(fo.data,Wo.data,Wo.numel);
-    k_fp32_to_fp16(f1.data,W1.data,W1.numel);
-    k_fp32_to_fp16(f2.data,W2.data,W2.numel);
+    k_fp32_to_fp16(fq.data,Wq.data,(int)Wq.numel);
+    k_fp32_to_fp16(fk.data,Wk.data,(int)Wk.numel);
+    k_fp32_to_fp16(fv.data,Wv.data,(int)Wv.numel);
+    k_fp32_to_fp16(fo.data,Wo.data,(int)Wo.numel);
+    k_fp32_to_fp16(f1.data,W1.data,(int)W1.numel);
+    k_fp32_to_fp16(f2.data,W2.data,(int)W2.numel);
     cudaDeviceSynchronize();
 }
 
@@ -75,9 +75,9 @@ void TinyModelH::init(){
     MemPool tmp(128ULL*1024*1024);
     Tensor fte(tmp,{vocab,dim}),flh(tmp,{dim,vocab}),flb(tmp,{vocab});
     fte.from_host(te); flh.from_host(lh); flb.from_host(lb);
-    k_fp32_to_fp16(fte.data,tok_embed.data,tok_embed.numel);
-    k_fp32_to_fp16(flh.data,lm_head.data,lm_head.numel);
-    k_fp32_to_fp16(flb.data,lm_bias.data,lm_bias.numel);
+    k_fp32_to_fp16(fte.data,tok_embed.data,(int)tok_embed.numel);
+    k_fp32_to_fp16(flh.data,lm_head.data,(int)lm_head.numel);
+    k_fp32_to_fp16(flb.data,lm_bias.data,(int)lm_bias.numel);
     cudaDeviceSynchronize();
 
     for(int i=0;i<layers;i++) blocks[i]->init();
@@ -131,10 +131,9 @@ std::vector<int> TinyModelH::generate_cached(MemPool& scratch, const std::vector
     scratch.reset();
     Tensor last_hidden(scratch,{1,dim});
     prefill(scratch,prompt,last_hidden);
-    scratch.reset();
-    Tensor h0(scratch,{1,dim});
-    CUDA_CHECK(cudaMemcpy(h0.data,last_hidden.data,dim*sizeof(float),cudaMemcpyDeviceToDevice));
-    int nxt=logits_to_token(scratch,h0);
+    Tensor keep(scratch,{1,dim});
+    CUDA_CHECK(cudaMemcpy(keep.data,last_hidden.data,dim*sizeof(float),cudaMemcpyDeviceToDevice));
+    int nxt=logits_to_token(scratch,keep);
     ids.push_back(nxt);
     for(int t=1;t<max_new_tokens;t++){
         int pos=(int)ids.size()-1;
@@ -164,7 +163,7 @@ void test_fp16_model(MemPool& model_pool, MemPool& scratch){
     m.init();
     std::vector<int> prompt={3,4,7};
     auto out=m.generate_cached(scratch,prompt,3);
-    bool ok=out.size()>=4;
+    bool ok=out.size()==6;
     chk4("fp16_cached_generation",ok);
 }
 

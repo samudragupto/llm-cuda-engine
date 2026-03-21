@@ -1,4 +1,5 @@
 #include <cstdio>
+#include <vector>
 #include <cuda_runtime.h>
 #include "cuda_check.h"
 #include "mem_pool.h"
@@ -8,6 +9,7 @@
 #include "phase2.h"
 #include "phase3.h"
 #include "phase4b.h"
+
 extern void bench_gemm(MemPool&, int, int, int, int);
 extern void bench_elementwise(MemPool&, int, int);
 extern void bench_transpose(MemPool&, int, int, int);
@@ -68,8 +70,8 @@ int main(int argc, char** argv) {
     test_argmax(pool); pool.reset();
     test_tiny_tokenizer();
 
-    MemPool model_pool(512ULL*1024*1024);
-    MemPool scratch(512ULL*1024*1024);
+    MemPool model_pool(512ULL * 1024 * 1024);
+    MemPool scratch(512ULL * 1024 * 1024);
 
     test_tiny_model(model_pool, scratch);
     scratch.reset();
@@ -80,24 +82,39 @@ int main(int argc, char** argv) {
     bench_phase4a(model_pool, scratch);
     scratch.reset();
 
+    MemPool fp16_model_pool(512ULL * 1024 * 1024);
+    test_fp16_kernels(fp16_model_pool, scratch);
+    scratch.reset();
+
+    MemPool fp16_model_pool2(512ULL * 1024 * 1024);
+    test_fp16_model(fp16_model_pool2, scratch);
+    scratch.reset();
+
+    bench_phase4b(scratch);
+    scratch.reset();
+
     if (argc > 1) test_safetensors(argv[1], pool);
-    else printf("Tip: engine_p4a.exe test_model.safetensors\n");
+    else printf("Tip: engine_p4b.exe test_model.safetensors\n");
 
     TinyTokenizer tok;
-    MemPool demo_model_pool(512ULL*1024*1024);
-    MemPool demo_scratch(512ULL*1024*1024);
-    TinyModel model(demo_model_pool,32,12,32,64,2);
-    model.init();
-    std::vector<int> prompt=tok.encode("hello world cuda");
-    auto out1=model.generate_cached(demo_scratch,prompt,5);
 
-    MemPool demo_model_pool2(512ULL*1024*1024);
-    TinyModelH modelh(demo_model_pool2,32,12,32,64,2);
+    MemPool demo_model_pool(512ULL * 1024 * 1024);
+    MemPool demo_scratch(512ULL * 1024 * 1024);
+    TinyModel model(demo_model_pool, 32, 12, 32, 64, 2);
+    model.init();
+    std::vector<int> prompt = tok.encode("hello world cuda");
+    auto out1 = model.generate_cached(demo_scratch, prompt, 5);
+
+    MemPool demo_model_pool2(512ULL * 1024 * 1024);
+    TinyModelH modelh(demo_model_pool2, 32, 12, 32, 64, 2);
     modelh.init();
     demo_scratch.reset();
-    auto out2=modelh.generate_cached(demo_scratch,prompt,5);
+    auto out2 = modelh.generate_cached(demo_scratch, prompt, 5);
 
     printf("=== PHASE 4B DEMO ===\n");
     printf("FP32  : %s\n", tok.decode(out1).c_str());
     printf("FP16  : %s\n", tok.decode(out2).c_str());
     printf("=== PHASE 4B COMPLETE ===\n");
+
+    return 0;
+}

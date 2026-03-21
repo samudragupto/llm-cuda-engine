@@ -1,10 +1,8 @@
 #pragma once
 #include <vector>
-#include <cuda_fp16.h>
-#include "mem_pool.h"
 #include "tensor.h"
-#include "fp16_tensor.h"
 #include "phase3.h"
+#include "fp16_tensor.h"
 
 struct TransformerBlockH {
     int dim, hidden_dim;
