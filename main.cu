@@ -1,14 +1,18 @@
 #include <cstdio>
 #include <vector>
+#include <cstdlib>
+#include <ctime>
 #include "mem_pool.h"
 #include "llama2.h"
 
 int main() {
+    // Seed random number generator for Top-P sampling
+    srand(time(NULL));
+
     printf("========================================\n");
     printf(" TINYLLAMA FP16 TENSOR CORE ENGINE      \n");
     printf("========================================\n");
     
-    // We only need ~2.5GB now instead of 5.5GB!
     MemPool model_pool(2800ULL * 1024 * 1024); 
     MemPool scratch_pool(256ULL * 1024 * 1024);
 
@@ -18,7 +22,15 @@ int main() {
     model_pool.print_stats("Llama FP16 Memory footprint");
 
     std::vector<int> prompt = {1, 450, 7483, 310, 3444, 338};
-    llama.chat(scratch_pool, prompt, 30);
+    
+    // Phase 3 Upgrade: Full Generation Config API
+    GenerationConfig config;
+    config.max_new_tokens = 50;
+    config.temperature = 0.8f;        // Adds creativity
+    config.top_p = 0.9f;              // Truncates weird tail tokens
+    config.repetition_penalty = 1.15f;// Stops infinite loops
+
+    llama.chat(scratch_pool, prompt, config);
 
     return 0;
 }

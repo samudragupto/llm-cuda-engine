@@ -6,6 +6,14 @@
 #include "tensor.h"
 #include "mem_pool.h"
 
+// Phase 3 Upgrade: Full Generation Config API
+struct GenerationConfig {
+    int max_new_tokens = 50;
+    float temperature = 0.7f;
+    float top_p = 0.9f;
+    float repetition_penalty = 1.1f;
+};
+
 struct HalfTensor {
     half* data;
     int numel;
@@ -38,6 +46,7 @@ struct Llama2FP16 {
 
     Llama2FP16(MemPool& pool);
     void load_weights(const char* path);
-    int generate_next(MemPool& scratch, int token_id, int pos);
-    void chat(MemPool& scratch, const std::vector<int>& prompt_ids, int max_tokens);
+    // Updated to accept config and past tokens for sampling/repetition penalty
+    int generate_next(MemPool& scratch, int token_id, int pos, const GenerationConfig& cfg, const std::vector<int>& past_tokens);
+    void chat(MemPool& scratch, const std::vector<int>& prompt_ids, GenerationConfig cfg);
 };

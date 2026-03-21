@@ -108,7 +108,7 @@ void Llama2FP16::load_weights(const char* path) {
     fclose(f);
 }
 
-int Llama2FP16::generate_next(MemPool& scratch, int token_id, int pos) {
+int Llama2FP16::generate_next(MemPool& scratch, int token_id, int pos, const GenerationConfig& cfg, const std::vector<int>& past_tokens) {
     scratch.reset();
     int* tid_data = scratch.alloc<int>(4); 
     cudaMemcpy(tid_data, &token_id, sizeof(int), cudaMemcpyHostToDevice);
@@ -121,60 +121,90 @@ int Llama2FP16::generate_next(MemPool& scratch, int token_id, int pos) {
         k_half_copy(tmp.data, x.data, dim);
     }
     
-    HalfTensor final_norm(scratch, {1, dim}), logits(scratch, {1, vocab});
+    HalfTensor final_norm(scratch, {1, dim}), logits_fp16(scratch, {1, vocab});
     k_half_rmsnorm(x.data, norm_w.data, final_norm.data, 1, dim, 1e-5f);
+    k_half_linear(handle, final_norm.data, lm_head.data, logits_fp16.data, dim, vocab);
     
+    // --- PHASE 3 UPGRADES: SAMPLING KERNELS ---
+    Tensor logits_fp32(scratch, {1, vocab});
+    k_half_to_float(logits_fp16.data, logits_fp32.data, vocab);
+
+    // 1. Apply Repetition Penalty
+    if (cfg.repetition_penalty > 1.0f && past_tokens.size() > 0) {
+        int* d_past = scratch.alloc<int>(past_tokens.size());
+        cudaMemcpy(d_past, past_tokens.data(), past_tokens.size() * sizeof(int), cudaMemcpyHostToDevice);
+        k_apply_repetition_penalty(logits_fp32.data, d_past, past_tokens.size(), cfg.repetition_penalty);
+    }
+
+    // 2. Apply Temperature
+    if (cfg.temperature != 1.0f && cfg.temperature > 0.0f) {
+        k_apply_temperature(logits_fp32.data, cfg.temperature, vocab);
+    }
+
     int* out_data = scratch.alloc<int>(4);
-    k_half_linear(handle, final_norm.data, lm_head.data, logits.data, dim, vocab);
-    k_half_argmax_row(logits.data, out_data, 1, vocab);
+
+    if (cfg.temperature <= 0.0f) {
+        // Greedy Decode
+        k_argmax_row(logits_fp32.data, out_data, 1, vocab);
+    } else {
+        // Top-P / Temperature Sampling
+        Tensor probs(scratch, {1, vocab});
+        k_row_softmax(logits_fp32.data, probs.data, 1, vocab);
+        
+        // Generate random float between 0 and 1
+        float random_val = (float)rand() / (float)RAND_MAX;
+        k_sample_top_p(probs.data, out_data, cfg.top_p, random_val, vocab);
+    }
     
     int h_out = 0;
     cudaMemcpy(&h_out, out_data, sizeof(int), cudaMemcpyDeviceToHost);
     return h_out;
 }
 
-void Llama2FP16::chat(MemPool& scratch, const std::vector<int>& prompt_ids, int max_tokens) {
+#include <chrono>
+
+void Llama2FP16::chat(MemPool& scratch, const std::vector<int>& prompt_ids, GenerationConfig cfg) {
     printf("\n[TinyLlama FP16]: ");
     int pos = 0;
+    std::vector<int> past_tokens; // Track history for repetition penalty
     
-    // Print Prompt
     for(int id : prompt_ids) { 
         printf("%s", tokenizer.decode(id).c_str()); 
         fflush(stdout); 
+        past_tokens.push_back(id);
     }
     
-    // Prefill Phase
     int next_token = prompt_ids[0];
     for (int i = 0; i < prompt_ids.size() - 1; i++) {
-        next_token = generate_next(scratch, prompt_ids[i], pos++);
+        next_token = generate_next(scratch, prompt_ids[i], pos++, cfg, past_tokens);
     }
     next_token = prompt_ids.back();
 
-    // Start Timer!
     cudaDeviceSynchronize();
     auto start_time = std::chrono::high_resolution_clock::now();
     int tokens_generated = 0;
 
-    // Decode Phase
-    for (int i = 0; i < max_tokens; i++) {
-        next_token = generate_next(scratch, next_token, pos++);
+    for (int i = 0; i < cfg.max_new_tokens; i++) {
+        next_token = generate_next(scratch, next_token, pos++, cfg, past_tokens);
         if (next_token == 2 || next_token == 0) break;
+        
+        past_tokens.push_back(next_token); // Update history
+        
         printf("%s", tokenizer.decode(next_token).c_str()); 
         fflush(stdout);
         tokens_generated++;
     }
     printf("\n");
 
-    // Stop Timer!
     cudaDeviceSynchronize();
     auto end_time = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> elapsed = end_time - start_time;
     
     printf("\n========================================\n");
-    printf(" PERFORMANCE BENCHMARK\n");
+    printf(" PERFORMANCE & SAMPLING BENCHMARK\n");
     printf("========================================\n");
     printf(" Tokens Generated : %d\n", tokens_generated);
-    printf(" Elapsed Time     : %.3f seconds\n", elapsed.count());
     printf(" Speed            : %.2f Tokens / Second\n", tokens_generated / elapsed.count());
+    printf(" Config           : Temp=%.2f, TopP=%.2f, RepPen=%.2f\n", cfg.temperature, cfg.top_p, cfg.repetition_penalty);
     printf("========================================\n");
 }
