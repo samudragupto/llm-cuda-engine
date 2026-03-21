@@ -50,6 +50,24 @@ __global__ void _gemm_tiled_hf(float* A,half* B,float* C,int M,int N,int K){
     if(r<M&&c<N)C[r*N+c]=s;
 }
 
+__global__ void _gemv(float* x,float* W,float* y,int K,int N){
+    int col=blockIdx.x*blockDim.x+threadIdx.x;
+    if(col<N){
+        float sum=0.0f;
+        for(int k=0;k<K;k++) sum+=x[k]*W[k*N+col];
+        y[col]=sum;
+    }
+}
+
+__global__ void _gemv_hf(float* x,half* W,float* y,int K,int N){
+    int col=blockIdx.x*blockDim.x+threadIdx.x;
+    if(col<N){
+        float sum=0.0f;
+        for(int k=0;k<K;k++) sum+=x[k]*__half2float(W[k*N+col]);
+        y[col]=sum;
+    }
+}
+
 __global__ void _transpose(float* in,float* out,int rows,int cols){
     __shared__ float tile[TILE][TILE+1];
     int x=blockIdx.x*TILE+threadIdx.x,y=blockIdx.y*TILE+threadIdx.y;
@@ -201,6 +219,8 @@ void k_fp16_to_fp32(half* src,float* dst,int n){_fp16_to_fp32<<<(n+255)/256,256>
 void k_gemm_naive(float* A,float* B,float* C,int M,int N,int K){dim3 g((N+15)/16,(M+15)/16),b(16,16);_gemm_naive<<<g,b>>>(A,B,C,M,N,K);}
 void k_gemm_tiled(float* A,float* B,float* C,int M,int N,int K){dim3 g((N+TILE-1)/TILE,(M+TILE-1)/TILE),b(TILE,TILE);_gemm_tiled<<<g,b>>>(A,B,C,M,N,K);}
 void k_gemm_tiled_hf(float* A,half* B,float* C,int M,int N,int K){dim3 g((N+TILE-1)/TILE,(M+TILE-1)/TILE),b(TILE,TILE);_gemm_tiled_hf<<<g,b>>>(A,B,C,M,N,K);}
+void k_gemv(float* x,float* W,float* y,int K,int N){_gemv<<<(N+255)/256,256>>>(x,W,y,K,N);}
+void k_gemv_hf(float* x,half* W,float* y,int K,int N){_gemv_hf<<<(N+255)/256,256>>>(x,W,y,K,N);}
 void k_transpose(float* in,float* out,int rows,int cols){dim3 g((cols+TILE-1)/TILE,(rows+TILE-1)/TILE),b(TILE,TILE);_transpose<<<g,b>>>(in,out,rows,cols);}
 void k_rmsnorm(float* x,float* w,float* y,int rows,int cols,float eps){_rmsnorm<<<rows,256>>>(x,w,y,rows,cols,eps);}
 void k_silu(float* x,float* y,int n){_silu<<<(n+255)/256,256>>>(x,y,n);}

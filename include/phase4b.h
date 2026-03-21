@@ -32,3 +32,4 @@ struct TinyModelH {
 void test_fp16_kernels(MemPool& model_pool, MemPool& scratch);
 void test_fp16_model(MemPool& model_pool, MemPool& scratch);
 void bench_phase4b(MemPool& scratch);
+void bench_phase4c(MemPool& scratch);

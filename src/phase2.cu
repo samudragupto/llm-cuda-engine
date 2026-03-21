@@ -47,9 +47,9 @@ void TransformerBlock::forward_one(MemPool& pool, Tensor& x, Tensor& out, Tensor
     Tensor xn(pool,{1,dim}),Q(pool,{1,dim}),K(pool,{1,dim}),V(pool,{1,dim}),S(pool,{1,pos+1}),P(pool,{1,pos+1}),A(pool,{1,dim}),AO(pool,{1,dim});
     Tensor fn(pool,{1,dim}),H(pool,{1,hidden_dim}),Hs(pool,{1,hidden_dim}),F(pool,{1,dim}),tmp(pool,{1,dim});
     k_rmsnorm(x.data,w_rms1.data,xn.data,1,dim,1e-5f);
-    k_gemm_tiled(xn.data,Wq.data,Q.data,1,dim,dim);
-    k_gemm_tiled(xn.data,Wk.data,K.data,1,dim,dim);
-    k_gemm_tiled(xn.data,Wv.data,V.data,1,dim,dim);
+    k_gemv(xn.data,Wq.data,Q.data,dim,dim);
+    k_gemv(xn.data,Wk.data,K.data,dim,dim);
+    k_gemv(xn.data,Wv.data,V.data,dim,dim);
     k_rope(Q.data,1,dim,pos);
     k_rope(K.data,1,dim,pos);
     k_copy_row_to_cache(K.data,k_cache.data,pos,dim);
@@ -57,12 +57,12 @@ void TransformerBlock::forward_one(MemPool& pool, Tensor& x, Tensor& out, Tensor
     k_attention_scores_one(Q.data,k_cache.data,S.data,pos+1,dim);
     k_row_softmax(S.data,P.data,1,pos+1);
     k_attention_weighted_sum_one(P.data,v_cache.data,A.data,pos+1,dim);
-    k_gemm_tiled(A.data,Wo.data,AO.data,1,dim,dim);
+    k_gemv(A.data,Wo.data,AO.data,dim,dim);
     k_add(x.data,AO.data,tmp.data,dim);
     k_rmsnorm(tmp.data,w_rms2.data,fn.data,1,dim,1e-5f);
-    k_gemm_tiled(fn.data,W1.data,H.data,1,hidden_dim,dim);
+    k_gemv(fn.data,W1.data,H.data,dim,hidden_dim);
     k_silu(H.data,Hs.data,hidden_dim);
-    k_gemm_tiled(Hs.data,W2.data,F.data,1,dim,hidden_dim);
+    k_gemv(Hs.data,W2.data,F.data,hidden_dim,dim);
     k_add(tmp.data,F.data,out.data,dim);
 }
 

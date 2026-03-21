@@ -40,9 +40,9 @@ void TransformerBlockH::forward_one(MemPool& scratch, Tensor& x, Tensor& out, Te
     Tensor xn(scratch,{1,dim}),Q(scratch,{1,dim}),K(scratch,{1,dim}),V(scratch,{1,dim}),S(scratch,{1,pos+1}),P(scratch,{1,pos+1}),A(scratch,{1,dim}),AO(scratch,{1,dim});
     Tensor fn(scratch,{1,dim}),H(scratch,{1,hidden_dim}),Hs(scratch,{1,hidden_dim}),F(scratch,{1,dim}),tmp(scratch,{1,dim});
     k_rmsnorm(x.data,w_rms1.data,xn.data,1,dim,1e-5f);
-    k_gemm_tiled_hf(xn.data,Wq.data,Q.data,1,dim,dim);
-    k_gemm_tiled_hf(xn.data,Wk.data,K.data,1,dim,dim);
-    k_gemm_tiled_hf(xn.data,Wv.data,V.data,1,dim,dim);
+    k_gemv_hf(xn.data,Wq.data,Q.data,dim,dim);
+    k_gemv_hf(xn.data,Wk.data,K.data,dim,dim);
+    k_gemv_hf(xn.data,Wv.data,V.data,dim,dim);
     k_rope(Q.data,1,dim,pos);
     k_rope(K.data,1,dim,pos);
     k_copy_row_to_cache(K.data,k_cache.data,pos,dim);
@@ -50,12 +50,12 @@ void TransformerBlockH::forward_one(MemPool& scratch, Tensor& x, Tensor& out, Te
     k_attention_scores_one(Q.data,k_cache.data,S.data,pos+1,dim);
     k_row_softmax(S.data,P.data,1,pos+1);
     k_attention_weighted_sum_one(P.data,v_cache.data,A.data,pos+1,dim);
-    k_gemm_tiled_hf(A.data,Wo.data,AO.data,1,dim,dim);
+    k_gemv_hf(A.data,Wo.data,AO.data,dim,dim);
     k_add(x.data,AO.data,tmp.data,dim);
     k_rmsnorm(tmp.data,w_rms2.data,fn.data,1,dim,1e-5f);
-    k_gemm_tiled_hf(fn.data,W1.data,H.data,1,hidden_dim,dim);
+    k_gemv_hf(fn.data,W1.data,H.data,dim,hidden_dim);
     k_silu(H.data,Hs.data,hidden_dim);
-    k_gemm_tiled_hf(Hs.data,W2.data,F.data,1,dim,hidden_dim);
+    k_gemv_hf(Hs.data,W2.data,F.data,hidden_dim,dim);
     k_add(tmp.data,F.data,out.data,dim);
 }
 
@@ -104,7 +104,7 @@ void TinyModelH::prefill(MemPool& scratch, const std::vector<int>& ids, Tensor& 
 int TinyModelH::logits_to_token(MemPool& scratch, Tensor& hidden){
     Tensor logits(scratch,{1,vocab});
     IntTensor out(scratch,1);
-    k_gemm_tiled_hf(hidden.data,lm_head.data,logits.data,1,vocab,dim);
+    k_gemv_hf(hidden.data,lm_head.data,logits.data,dim,vocab);
     k_row_add_bias_h(logits.data,lm_bias.data,1,vocab);
     k_argmax_row(logits.data,out.data,1,vocab);
     cudaDeviceSynchronize();
@@ -208,4 +208,37 @@ void bench_phase4b(MemPool& scratch){
     printf("FP32 cached generate: %.4f ms\n",ms_fp32);
     printf("FP16 cached generate: %.4f ms\n",ms_fp16);
     printf("Speedup            : %.2fx\n\n",ms_fp32/ms_fp16);
+}
+
+void bench_phase4c(MemPool& scratch){
+    std::vector<int> prompt={3,4,5,6,7,8,9,10};
+    int it=20;
+    T4 t;
+
+    cudaDeviceSynchronize();
+    t.st();
+    for(int i=0;i<it;i++){
+        MemPool mp(512ULL*1024*1024);
+        TinyModel a(mp,1000,32,64,128,2);
+        a.init();
+        auto out=a.generate_cached(scratch,prompt,8);
+        (void)out;
+    }
+    float ms_fp32=t.ed()/it;
+
+    cudaDeviceSynchronize();
+    t.st();
+    for(int i=0;i<it;i++){
+        MemPool mp(512ULL*1024*1024);
+        TinyModelH b(mp,1000,32,64,128,2);
+        b.init();
+        auto out=b.generate_cached(scratch,prompt,8);
+        (void)out;
+    }
+    float ms_fp16=t.ed()/it;
+
+    printf("=== PHASE 4C BENCHMARKS ===\n");
+    printf("FP32 cached generate (GEMV): %.4f ms\n",ms_fp32);
+    printf("FP16 cached generate (GEMV): %.4f ms\n",ms_fp16);
+    printf("Speedup                  : %.2fx\n\n",ms_fp32/ms_fp16);
 }

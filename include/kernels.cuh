@@ -29,3 +29,6 @@ void k_copy_h(half* src, half* dst, int n);
 void k_embedding_lookup_h(int* ids, half* table, float* out, int seq, int dim);
 void k_row_add_bias_h(float* x, half* b, int rows, int cols);
 void k_gemm_tiled_hf(float* A, half* B, float* C, int M, int N, int K);
+
+void k_gemv(float* x, float* W, float* y, int K, int N);
+void k_gemv_hf(float* x, half* W, float* y, int K, int N);

@@ -98,7 +98,7 @@ void TinyModel::prefill(MemPool& scratch, const std::vector<int>& ids, Tensor& l
 int TinyModel::logits_to_token(MemPool& scratch, Tensor& hidden){
     Tensor logits(scratch,{1,vocab});
     IntTensor out(scratch,1);
-    k_gemm_tiled(hidden.data,lm_head.data,logits.data,1,vocab,dim);
+    k_gemv(hidden.data,lm_head.data,logits.data,dim,vocab);
     k_row_add_bias(logits.data,lm_bias.data,1,vocab);
     k_argmax_row(logits.data,out.data,1,vocab);
     cudaDeviceSynchronize();
