@@ -6,6 +6,7 @@
 #include "kernels.cuh"
 #include "weight_loader.h"
 #include "phase2.h"
+#include "phase3.h"
 
 extern void bench_gemm(MemPool&, int, int, int, int);
 extern void bench_elementwise(MemPool&, int, int);
@@ -35,6 +36,7 @@ void print_gpu_info() {
 
 int main(int argc, char** argv) {
     print_gpu_info();
+
     MemPool pool(1536ULL * 1024 * 1024);
 
     printf("=== PHASE 1 TESTS ===\n");
@@ -62,11 +64,27 @@ int main(int argc, char** argv) {
     test_block(pool); pool.reset();
     bench_phase2(pool); pool.reset();
 
-    if (argc > 1) test_safetensors(argv[1], pool);
-    else {
-        printf("Tip: engine_p1.exe test_model.safetensors\n");
-    }
+    test_embedding(pool); pool.reset();
+    test_argmax(pool); pool.reset();
+    test_tiny_tokenizer();
+    test_tiny_model(pool); pool.reset();
+    bench_phase3(pool); pool.reset();
 
-    printf("=== PHASE 2 COMPLETE ===\n");
+    if (argc > 1) test_safetensors(argv[1], pool);
+    else printf("Tip: engine_p3.exe test_model.safetensors\n");
+
+    TinyTokenizer tok;
+    TinyModel model(pool,32,12,32,64,2);
+    model.init();
+    std::vector<int> prompt=tok.encode("hello world cuda");
+    auto out=model.generate(pool,prompt,5);
+    printf("=== PHASE 3 DEMO ===\n");
+    printf("Prompt ids: ");
+    for(int x:prompt) printf("%d ",x);
+    printf("\nGenerated ids: ");
+    for(int x:out) printf("%d ",x);
+    printf("\nDecoded: %s\n", tok.decode(out).c_str());
+
+    printf("=== PHASE 3 COMPLETE ===\n");
     return 0;
 }

@@ -95,7 +95,7 @@ __global__ void _attention_scores(float* Q,float* K,float* S,int seq,int dim){
     if(i<seq&&j<seq){
         float sum=0.0f;
         for(int d=0;d<dim;d++)sum+=Q[i*dim+d]*K[j*dim+d];
-        S[i*seq+j]=sum/ sqrtf((float)dim);
+        S[i*seq+j]=sum/sqrtf((float)dim);
     }
 }
 
@@ -113,6 +113,30 @@ __global__ void _attention_weighted_sum(float* P,float* V,float* O,int seq,int d
     }
 }
 
+__global__ void _embedding_lookup(int* ids,float* table,float* out,int seq,int dim){
+    int t=blockIdx.y,d=blockIdx.x*blockDim.x+threadIdx.x;
+    if(t<seq&&d<dim){int id=ids[t];out[t*dim+d]=table[id*dim+d];}
+}
+
+__global__ void _gather_last_token(float* x,float* out,int seq,int dim){
+    int d=blockIdx.x*blockDim.x+threadIdx.x;
+    if(d<dim)out[d]=x[(seq-1)*dim+d];
+}
+
+__global__ void _argmax_row(float* x,int* out,int rows,int cols){
+    int r=blockIdx.x;
+    if(r<rows&&threadIdx.x==0){
+        int idx=0; float best=x[r*cols];
+        for(int i=1;i<cols;i++) if(x[r*cols+i]>best){best=x[r*cols+i];idx=i;}
+        out[r]=idx;
+    }
+}
+
+__global__ void _row_add_bias(float* x,float* b,int rows,int cols){
+    int r=blockIdx.y,c=blockIdx.x*blockDim.x+threadIdx.x;
+    if(r<rows&&c<cols)x[r*cols+c]+=b[c];
+}
+
 void k_add(float* a,float* b,float* c,int n){_add<<<(n+255)/256,256>>>(a,b,c,n);}
 void k_mul(float* a,float* b,float* c,int n){_mul<<<(n+255)/256,256>>>(a,b,c,n);}
 void k_scale(float* a,float s,float* c,int n){_scale<<<(n+255)/256,256>>>(a,s,c,n);}
@@ -128,3 +152,7 @@ void k_rope(float* x,int seq,int dim,int pos_base){_rope<<<seq,dim/2>>>(x,seq,di
 void k_attention_scores(float* Q,float* K,float* S,int seq,int dim){dim3 g((seq+255)/256,seq),b(256);_attention_scores<<<g,b>>>(Q,K,S,seq,dim);}
 void k_apply_causal_mask(float* S,int seq){dim3 g((seq+255)/256,seq),b(256);_apply_causal_mask<<<g,b>>>(S,seq);}
 void k_attention_weighted_sum(float* P,float* V,float* O,int seq,int dim){dim3 g((dim+255)/256,seq),b(256);_attention_weighted_sum<<<g,b>>>(P,V,O,seq,dim);}
+void k_embedding_lookup(int* ids,float* table,float* out,int seq,int dim){dim3 g((dim+255)/256,seq),b(256);_embedding_lookup<<<g,b>>>(ids,table,out,seq,dim);}
+void k_gather_last_token(float* x,float* out,int seq,int dim){_gather_last_token<<<(dim+255)/256,256>>>(x,out,seq,dim);}
+void k_argmax_row(float* x,int* out,int rows,int cols){_argmax_row<<<rows,1>>>(x,out,rows,cols);}
+void k_row_add_bias(float* x,float* b,int rows,int cols){dim3 g((cols+255)/256,rows),bb(256);_row_add_bias<<<g,bb>>>(x,b,rows,cols);}

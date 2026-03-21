@@ -14,3 +14,7 @@ void k_rope(float* x, int seq, int dim, int pos_base);
 void k_attention_scores(float* Q, float* K, float* S, int seq, int dim);
 void k_apply_causal_mask(float* S, int seq);
 void k_attention_weighted_sum(float* P, float* V, float* O, int seq, int dim);
+void k_embedding_lookup(int* ids, float* table, float* out, int seq, int dim);
+void k_gather_last_token(float* x, float* out, int seq, int dim);
+void k_argmax_row(float* x, int* out, int rows, int cols);
+void k_row_add_bias(float* x, float* b, int rows, int cols);
