@@ -251,6 +251,42 @@ __global__ void _apply_repetition_penalty(float* logits, int* past_tokens, int n
         }
     }
 }
+
+// --- PHASE 4 UPGRADES: KERNEL FUSION ---
+__global__ void _fused_add_rmsnorm(float* x, float* residual_in, float* w, float* norm_out, int rows, int cols, float eps) {
+    int r = blockIdx.x;
+    if (r >= rows) return;
+    
+    __shared__ float s;
+    if (threadIdx.x == 0) s = 0.0f;
+    __syncthreads();
+    
+    float ss = 0.0f;
+    for (int i = threadIdx.x; i < cols; i += blockDim.x) {
+        float val = x[r*cols + i] + residual_in[r*cols + i];
+        x[r*cols + i] = val; 
+        ss += val * val;
+    }
+    
+    for (int offset = 16; offset > 0; offset /= 2) {
+        ss += __shfl_down_sync(0xffffffff, ss, offset);
+    }
+    
+    if (threadIdx.x % 32 == 0) {
+        atomicAdd(&s, ss);
+    }
+    __syncthreads();
+    
+    if (threadIdx.x == 0) {
+        s = rsqrtf(s / cols + eps);
+    }
+    __syncthreads();
+    
+    for (int i = threadIdx.x; i < cols; i += blockDim.x) {
+        norm_out[r*cols + i] = x[r*cols + i] * s * w[i];
+    }
+}
+
 void k_add(float* a,float* b,float* c,int n){_add<<<(n+255)/256,256>>>(a,b,c,n);}
 void k_mul(float* a,float* b,float* c,int n){_mul<<<(n+255)/256,256>>>(a,b,c,n);}
 void k_scale(float* a,float s,float* c,int n){_scale<<<(n+255)/256,256>>>(a,s,c,n);}
@@ -309,4 +345,10 @@ void k_cublas_gemm(cublasHandle_t handle, float* A, float* B, float* C, int M, i
                 A, K,
                 &beta,
                 C, N);
+}
+void k_fused_add_rmsnorm(float* x, float* residual_in, float* w, float* norm_out, int rows, int cols, float eps) {
+    // Note: To make the atomicAdd / reduction totally safe across blocks, 
+    // we set blockDim to exactly 32 for now so 1 warp handles 1 row.
+    // For large models (dim 4096), we scale this up.
+    _fused_add_rmsnorm<<<rows, 32>>>(x, residual_in, w, norm_out, rows, cols, eps);
 }
