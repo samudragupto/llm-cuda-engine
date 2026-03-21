@@ -14,6 +14,7 @@ struct TransformerBlock {
         W1(pool,{d,h}),W2(pool,{h,d}) {}
     void init();
     void forward(MemPool& pool, Tensor& x, Tensor& out);
+    void forward_one(MemPool& pool, Tensor& x, Tensor& out, Tensor& k_cache, Tensor& v_cache, int pos);
 };
 
 void test_rmsnorm(MemPool& pool);

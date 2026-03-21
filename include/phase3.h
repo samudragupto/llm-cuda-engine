@@ -23,29 +23,35 @@ struct TinyTokenizer {
     std::string decode(const std::vector<int>& ids);
 };
 
-struct KVCache {
+struct LayerCache {
     Tensor K;
     Tensor V;
-    int max_seq, dim;
-    KVCache(MemPool& pool,int ms,int d): K(pool,{ms,d}), V(pool,{ms,d}), max_seq(ms), dim(d) {}
+    LayerCache(MemPool& pool,int max_seq,int dim): K(pool,{max_seq,dim}),V(pool,{max_seq,dim}) {}
 };
 
 struct TinyModel {
-    int vocab, seq, dim, hidden, layers;
+    int vocab, max_seq, dim, hidden, layers;
     Tensor tok_embed;
     Tensor lm_head;
     Tensor lm_bias;
     std::vector<TransformerBlock*> blocks;
-    TinyModel(MemPool& pool,int v,int s,int d,int h,int l);
+    std::vector<LayerCache*> caches;
+    TinyModel(MemPool& model_pool,int v,int s,int d,int h,int l);
     void init();
-    void embed(MemPool& pool, IntTensor& ids, Tensor& x);
-    void forward(MemPool& pool, IntTensor& ids, Tensor& logits);
-    int generate_next(MemPool& pool, const std::vector<int>& ids);
-    std::vector<int> generate(MemPool& pool, const std::vector<int>& prompt, int max_new_tokens);
+    void embed(MemPool& scratch, IntTensor& ids, Tensor& x, int seq_len);
+    void forward_full(MemPool& scratch, IntTensor& ids, Tensor& logits, int seq_len);
+    void prefill(MemPool& scratch, const std::vector<int>& ids, Tensor& last_hidden);
+    int logits_to_token(MemPool& scratch, Tensor& hidden);
+    int decode_next(MemPool& scratch, int token_id, int pos);
+    int generate_next_full(MemPool& scratch, const std::vector<int>& ids);
+    std::vector<int> generate_full(MemPool& scratch, const std::vector<int>& prompt, int max_new_tokens);
+    std::vector<int> generate_cached(MemPool& scratch, const std::vector<int>& prompt, int max_new_tokens);
 };
 
 void test_embedding(MemPool& pool);
 void test_argmax(MemPool& pool);
 void test_tiny_tokenizer();
-void test_tiny_model(MemPool& pool);
-void bench_phase3(MemPool& pool);
+void test_tiny_model(MemPool& model_pool, MemPool& scratch);
+void test_kv_cache_equivalence(MemPool& model_pool, MemPool& scratch);
+void bench_phase3(MemPool& model_pool, MemPool& scratch);
+void bench_phase4a(MemPool& model_pool, MemPool& scratch);

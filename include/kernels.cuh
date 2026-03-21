@@ -18,3 +18,6 @@ void k_embedding_lookup(int* ids, float* table, float* out, int seq, int dim);
 void k_gather_last_token(float* x, float* out, int seq, int dim);
 void k_argmax_row(float* x, int* out, int rows, int cols);
 void k_row_add_bias(float* x, float* b, int rows, int cols);
+void k_copy_row_to_cache(float* src_row, float* cache, int pos, int dim);
+void k_attention_scores_one(float* q, float* K, float* s, int len, int dim);
+void k_attention_weighted_sum_one(float* p, float* V, float* o, int len, int dim);

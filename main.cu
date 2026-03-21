@@ -67,24 +67,37 @@ int main(int argc, char** argv) {
     test_embedding(pool); pool.reset();
     test_argmax(pool); pool.reset();
     test_tiny_tokenizer();
-    test_tiny_model(pool); pool.reset();
-    bench_phase3(pool); pool.reset();
+
+    MemPool model_pool(512ULL*1024*1024);
+    MemPool scratch(512ULL*1024*1024);
+
+    test_tiny_model(model_pool, scratch);
+    scratch.reset();
+    test_kv_cache_equivalence(model_pool, scratch);
+    scratch.reset();
+    bench_phase3(model_pool, scratch);
+    scratch.reset();
+    bench_phase4a(model_pool, scratch);
+    scratch.reset();
 
     if (argc > 1) test_safetensors(argv[1], pool);
-    else printf("Tip: engine_p3.exe test_model.safetensors\n");
+    else printf("Tip: engine_p4a.exe test_model.safetensors\n");
 
     TinyTokenizer tok;
-    TinyModel model(pool,32,12,32,64,2);
+    MemPool demo_model_pool(512ULL*1024*1024);
+    MemPool demo_scratch(512ULL*1024*1024);
+    TinyModel model(demo_model_pool,32,12,32,64,2);
     model.init();
     std::vector<int> prompt=tok.encode("hello world cuda");
-    auto out=model.generate(pool,prompt,5);
-    printf("=== PHASE 3 DEMO ===\n");
-    printf("Prompt ids: ");
-    for(int x:prompt) printf("%d ",x);
-    printf("\nGenerated ids: ");
-    for(int x:out) printf("%d ",x);
-    printf("\nDecoded: %s\n", tok.decode(out).c_str());
-
-    printf("=== PHASE 3 COMPLETE ===\n");
+    auto out1=model.generate_full(demo_scratch,prompt,5);
+    MemPool demo_model_pool2(512ULL*1024*1024);
+    TinyModel model2(demo_model_pool2,32,12,32,64,2);
+    model2.init();
+    demo_scratch.reset();
+    auto out2=model2.generate_cached(demo_scratch,prompt,5);
+    printf("=== PHASE 4A DEMO ===\n");
+    printf("Full   : %s\n", tok.decode(out1).c_str());
+    printf("Cached : %s\n", tok.decode(out2).c_str());
+    printf("=== PHASE 4A COMPLETE ===\n");
     return 0;
 }

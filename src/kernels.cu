@@ -137,6 +137,29 @@ __global__ void _row_add_bias(float* x,float* b,int rows,int cols){
     if(r<rows&&c<cols)x[r*cols+c]+=b[c];
 }
 
+__global__ void _copy_row_to_cache(float* src_row,float* cache,int pos,int dim){
+    int d=blockIdx.x*blockDim.x+threadIdx.x;
+    if(d<dim)cache[pos*dim+d]=src_row[d];
+}
+
+__global__ void _attention_scores_one(float* q,float* K,float* s,int len,int dim){
+    int j=blockIdx.x*blockDim.x+threadIdx.x;
+    if(j<len){
+        float sum=0.0f;
+        for(int d=0;d<dim;d++)sum+=q[d]*K[j*dim+d];
+        s[j]=sum/sqrtf((float)dim);
+    }
+}
+
+__global__ void _attention_weighted_sum_one(float* p,float* V,float* o,int len,int dim){
+    int d=blockIdx.x*blockDim.x+threadIdx.x;
+    if(d<dim){
+        float sum=0.0f;
+        for(int j=0;j<len;j++)sum+=p[j]*V[j*dim+d];
+        o[d]=sum;
+    }
+}
+
 void k_add(float* a,float* b,float* c,int n){_add<<<(n+255)/256,256>>>(a,b,c,n);}
 void k_mul(float* a,float* b,float* c,int n){_mul<<<(n+255)/256,256>>>(a,b,c,n);}
 void k_scale(float* a,float s,float* c,int n){_scale<<<(n+255)/256,256>>>(a,s,c,n);}
@@ -156,3 +179,6 @@ void k_embedding_lookup(int* ids,float* table,float* out,int seq,int dim){dim3 g
 void k_gather_last_token(float* x,float* out,int seq,int dim){_gather_last_token<<<(dim+255)/256,256>>>(x,out,seq,dim);}
 void k_argmax_row(float* x,int* out,int rows,int cols){_argmax_row<<<rows,1>>>(x,out,rows,cols);}
 void k_row_add_bias(float* x,float* b,int rows,int cols){dim3 g((cols+255)/256,rows),bb(256);_row_add_bias<<<g,bb>>>(x,b,rows,cols);}
+void k_copy_row_to_cache(float* src_row,float* cache,int pos,int dim){_copy_row_to_cache<<<(dim+255)/256,256>>>(src_row,cache,pos,dim);}
+void k_attention_scores_one(float* q,float* K,float* s,int len,int dim){_attention_scores_one<<<(len+255)/256,256>>>(q,K,s,len,dim);}
+void k_attention_weighted_sum_one(float* p,float* V,float* o,int len,int dim){_attention_weighted_sum_one<<<(dim+255)/256,256>>>(p,V,o,len,dim);}
