@@ -211,7 +211,32 @@ __global__ void _mha_weighted_sum(float* P, float* V, float* O, int seq, int n_h
         O[r*(n_heads*head_dim) + h*head_dim + d] = sum;
     }
 }
+// --- PHASE 3 UPGRADES: SAMPLING ---
 
+__global__ void _apply_temperature(float* logits, float temp, int vocab_size) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < vocab_size) {
+        logits[i] /= temp;
+    }
+}
+
+// A simple cumulative sum sampler. 
+// Note: In a true prod engine (vLLM/llama.cpp), this involves a fused bitonic sort for Top-K. 
+// For this stage, we do a basic linear scan on a single thread block.
+__global__ void _sample_top_p(float* probs, int* out_idx, float p, float random_val, int vocab_size) {
+    if (threadIdx.x == 0 && blockIdx.x == 0) {
+        float cdf = 0.0f;
+        int last_idx = vocab_size - 1;
+        for (int i = 0; i < vocab_size; i++) {
+            cdf += probs[i];
+            if (cdf >= random_val) {
+                out_idx[0] = i;
+                return;
+            }
+        }
+        out_idx[0] = last_idx; // Fallback
+    }
+}
 void k_add(float* a,float* b,float* c,int n){_add<<<(n+255)/256,256>>>(a,b,c,n);}
 void k_mul(float* a,float* b,float* c,int n){_mul<<<(n+255)/256,256>>>(a,b,c,n);}
 void k_scale(float* a,float s,float* c,int n){_scale<<<(n+255)/256,256>>>(a,s,c,n);}
@@ -244,4 +269,10 @@ void k_mha_scores_fused_mask(float* Q, float* K, float* S, int seq, int n_heads,
 void k_mha_weighted_sum(float* P, float* V, float* O, int seq, int n_heads, int head_dim){
     dim3 g((head_dim+31)/32, seq, n_heads), b(32);
     _mha_weighted_sum<<<g,b>>>(P,V,O,seq,n_heads,head_dim);
+}
+void k_apply_temperature(float* logits, float temp, int vocab_size) {
+    _apply_temperature<<<(vocab_size+255)/256, 256>>>(logits, temp, vocab_size);
+}
+void k_sample_top_p(float* probs, int* out_idx, float p, float random_val, int vocab_size) {
+    _sample_top_p<<<1, 1>>>(probs, out_idx, p, random_val, vocab_size);
 }

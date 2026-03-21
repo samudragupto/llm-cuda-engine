@@ -83,10 +83,23 @@ int main(int argc, char** argv) {
     TinyModel model(demo_model_pool, 32, 12, 32, 64, 2);
     model.init();
     std::vector<int> prompt = tok.encode("hello world cuda");
-    auto out1 = model.generate_cached(demo_scratch, prompt, 5);
+    
+    // Create Configs for Greedy vs Creative
+    GenerationConfig greedy_cfg;
+    greedy_cfg.max_new_tokens = 5;
+    greedy_cfg.temperature = 0.0f; // Exact reproduction
+
+    GenerationConfig creative_cfg;
+    creative_cfg.max_new_tokens = 5;
+    creative_cfg.temperature = 1.5f; // Wild tokens
+
+    auto out1 = model.generate_cached(demo_scratch, prompt, greedy_cfg);
+    demo_scratch.reset();
+    auto out_creative = model.generate_cached(demo_scratch, prompt, creative_cfg);
 
     printf("\n=== DEMO ===\n");
-    printf("Generated: %s\n", tok.decode(out1).c_str());
+    printf("Greedy (Temp 0.0): %s\n", tok.decode(out1).c_str());
+    printf("Sample (Temp 1.5): %s\n", tok.decode(out_creative).c_str());
 
     // --- PHASE 1 UPGRADES DEMO ---
     printf("\n=== PHASE 1 UPGRADES DEMO ===\n");

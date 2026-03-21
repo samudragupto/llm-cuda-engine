@@ -29,6 +29,12 @@ struct LayerCache {
     LayerCache(MemPool& pool,int max_seq,int dim): K(pool,{max_seq,dim}),V(pool,{max_seq,dim}) {}
 };
 
+struct GenerationConfig {
+    float temperature = 1.0f;
+    float top_p = 1.0f;
+    int max_new_tokens = 50;
+};
+
 struct TinyModel {
     int vocab, max_seq, dim, hidden, layers;
     Tensor tok_embed;
@@ -41,11 +47,14 @@ struct TinyModel {
     void embed(MemPool& scratch, IntTensor& ids, Tensor& x, int seq_len);
     void forward_full(MemPool& scratch, IntTensor& ids, Tensor& logits, int seq_len);
     void prefill(MemPool& scratch, const std::vector<int>& ids, Tensor& last_hidden);
-    int logits_to_token(MemPool& scratch, Tensor& hidden);
-    int decode_next(MemPool& scratch, int token_id, int pos);
-    int generate_next_full(MemPool& scratch, const std::vector<int>& ids);
-    std::vector<int> generate_full(MemPool& scratch, const std::vector<int>& prompt, int max_new_tokens);
-    std::vector<int> generate_cached(MemPool& scratch, const std::vector<int>& prompt, int max_new_tokens);
+    
+    // Updated sampling signatures
+    int logits_to_token(MemPool& scratch, Tensor& hidden, GenerationConfig config);
+    int decode_next(MemPool& scratch, int token_id, int pos, GenerationConfig config);
+    int generate_next_full(MemPool& scratch, const std::vector<int>& ids, GenerationConfig config);
+    
+    std::vector<int> generate_full(MemPool& scratch, const std::vector<int>& prompt, GenerationConfig config);
+    std::vector<int> generate_cached(MemPool& scratch, const std::vector<int>& prompt, GenerationConfig config);
 };
 
 void test_embedding(MemPool& pool);

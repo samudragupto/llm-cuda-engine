@@ -13,13 +13,11 @@ void k_transpose(float* in, float* out, int rows, int cols);
 
 void k_rmsnorm(float* x, float* w, float* y, int rows, int cols, float eps);
 void k_silu(float* x, float* y, int n);
-
-// Phase 2 Upgrades:
 void k_swiglu(float* gate, float* up, float* out, int n);
+
 void k_mha_scores_fused_mask(float* Q, float* K, float* S, int seq, int n_heads, int head_dim);
 void k_mha_weighted_sum(float* P, float* V, float* O, int seq, int n_heads, int head_dim);
 
-// Original Dense Attention (kept for backwards compatibility tests)
 void k_attention_scores(float* Q, float* K, float* S, int seq, int dim);
 void k_apply_causal_mask(float* S, int seq);
 void k_attention_weighted_sum(float* P, float* V, float* O, int seq, int dim);
@@ -36,3 +34,7 @@ void k_row_add_bias(float* x, float* b, int rows, int cols);
 void k_copy_row_to_cache(float* src_row, float* cache, int pos, int dim);
 
 void k_gemv(float* x, float* W, float* y, int K, int N);
+
+// NEW Phase 3 Upgrades: Sampling
+void k_apply_temperature(float* logits, float temp, int vocab_size);
+void k_sample_top_p(float* probs, int* out_idx, float p, float random_val, int vocab_size);

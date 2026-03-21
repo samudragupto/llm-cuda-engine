@@ -4,6 +4,7 @@
 #include <cuda_runtime.h>
 #include <cstdio>
 #include <cmath>
+#include <cstdlib>
 
 static int p3_pass=0,p3_fail=0;
 static void chk3(const char* n,bool ok){if(ok){printf("  [PASS] %s\n",n);p3_pass++;}else{printf("  [FAIL] %s\n",n);p3_fail++;}}
@@ -95,18 +96,30 @@ void TinyModel::prefill(MemPool& scratch, const std::vector<int>& ids, Tensor& l
     }
 }
 
-int TinyModel::logits_to_token(MemPool& scratch, Tensor& hidden){
+int TinyModel::logits_to_token(MemPool& scratch, Tensor& hidden, GenerationConfig config){
     Tensor logits(scratch,{1,vocab});
     IntTensor out(scratch,1);
     k_gemm_tiled(hidden.data,lm_head.data,logits.data,1,vocab,dim);
     k_row_add_bias(logits.data,lm_bias.data,1,vocab);
-    k_argmax_row(logits.data,out.data,1,vocab);
+    
+    if (config.temperature == 0.0f) {
+        k_argmax_row(logits.data, out.data, 1, vocab);
+    } else {
+        if (config.temperature != 1.0f) {
+            k_apply_temperature(logits.data, config.temperature, vocab);
+        }
+        Tensor probs(scratch, {1, vocab});
+        k_row_softmax(logits.data, probs.data, 1, vocab);
+        float rand_val = static_cast<float>(rand()) / static_cast<float>(RAND_MAX);
+        k_sample_top_p(probs.data, out.data, config.top_p, rand_val, vocab);
+    }
+    
     cudaDeviceSynchronize();
     std::vector<int> h; out.to_host(h);
     return h[0];
 }
 
-int TinyModel::decode_next(MemPool& scratch, int token_id, int pos){
+int TinyModel::decode_next(MemPool& scratch, int token_id, int pos, GenerationConfig config){
     scratch.reset();
     IntTensor tid(scratch,1);
     std::vector<int> h={token_id};
@@ -117,47 +130,61 @@ int TinyModel::decode_next(MemPool& scratch, int token_id, int pos){
         blocks[l]->forward_one(scratch,x,tmp,caches[l]->K,caches[l]->V,pos);
         k_copy(tmp.data,x.data,dim);
     }
-    return logits_to_token(scratch,x);
+    return logits_to_token(scratch, x, config);
 }
 
-int TinyModel::generate_next_full(MemPool& scratch, const std::vector<int>& ids){
+int TinyModel::generate_next_full(MemPool& scratch, const std::vector<int>& ids, GenerationConfig config){
     scratch.reset();
     int seq_len=(int)ids.size();
     IntTensor dids(scratch,seq_len);
     dids.from_host(ids);
     Tensor logits(scratch,{seq_len,vocab}),last(scratch,{1,vocab});
     IntTensor out(scratch,1);
+    
     forward_full(scratch,dids,logits,seq_len);
     k_gather_last_token(logits.data,last.data,seq_len,vocab);
-    k_argmax_row(last.data,out.data,1,vocab);
+    
+    if (config.temperature == 0.0f) {
+        k_argmax_row(last.data, out.data, 1, vocab);
+    } else {
+        if (config.temperature != 1.0f) {
+            k_apply_temperature(last.data, config.temperature, vocab);
+        }
+        Tensor probs(scratch, {1, vocab});
+        k_row_softmax(last.data, probs.data, 1, vocab);
+        float rand_val = static_cast<float>(rand()) / static_cast<float>(RAND_MAX);
+        k_sample_top_p(probs.data, out.data, config.top_p, rand_val, vocab);
+    }
+    
     cudaDeviceSynchronize();
     std::vector<int> h; out.to_host(h);
     return h[0];
 }
 
-std::vector<int> TinyModel::generate_full(MemPool& scratch, const std::vector<int>& prompt, int max_new_tokens){
+std::vector<int> TinyModel::generate_full(MemPool& scratch, const std::vector<int>& prompt, GenerationConfig config){
     std::vector<int> ids=prompt;
-    for(int t=0;t<max_new_tokens;t++){
-        int nxt=generate_next_full(scratch,ids);
+    for(int t=0;t<config.max_new_tokens;t++){
+        int nxt=generate_next_full(scratch,ids, config);
         ids.push_back(nxt);
         if((int)ids.size()>=max_seq)break;
     }
     return ids;
 }
 
-std::vector<int> TinyModel::generate_cached(MemPool& scratch, const std::vector<int>& prompt, int max_new_tokens){
+std::vector<int> TinyModel::generate_cached(MemPool& scratch, const std::vector<int>& prompt, GenerationConfig config){
     std::vector<int> ids=prompt;
     scratch.reset();
     Tensor last_hidden(scratch,{1,dim});
     prefill(scratch,prompt,last_hidden);
-    scratch.reset();
-    Tensor hidden0(scratch,{1,dim});
-    CUDA_CHECK(cudaMemcpy(hidden0.data,last_hidden.data,dim*sizeof(float),cudaMemcpyDeviceToDevice));
-    int nxt=logits_to_token(scratch,hidden0);
+    Tensor keep(scratch,{1,dim});
+    CUDA_CHECK(cudaMemcpy(keep.data,last_hidden.data,dim*sizeof(float),cudaMemcpyDeviceToDevice));
+    
+    int nxt=logits_to_token(scratch, keep, config);
     ids.push_back(nxt);
-    for(int t=1;t<max_new_tokens;t++){
+    
+    for(int t=1;t<config.max_new_tokens;t++){
         int pos=(int)ids.size()-1;
-        nxt=decode_next(scratch,ids[pos],pos);
+        nxt=decode_next(scratch, ids[pos], pos, config);
         ids.push_back(nxt);
         if((int)ids.size()>=max_seq)break;
     }
@@ -200,7 +227,8 @@ void test_tiny_model(MemPool& model_pool, MemPool& scratch){
     TinyModel m(model_pool,32,8,32,64,2);
     m.init();
     std::vector<int> prompt={3,4,7};
-    int nxt=m.generate_next_full(scratch,prompt);
+    GenerationConfig cfg; cfg.max_new_tokens = 1; cfg.temperature = 0.0f;
+    int nxt=m.generate_next_full(scratch,prompt,cfg);
     bool ok=nxt>=0&&nxt<32;
     chk3("tiny_model_generate_next",ok);
 }
@@ -209,12 +237,13 @@ void test_kv_cache_equivalence(MemPool& model_pool, MemPool& scratch){
     TinyModel m(model_pool,32,12,32,64,2);
     m.init();
     std::vector<int> prompt={3,4,7};
-    auto a=m.generate_full(scratch,prompt,3);
+    GenerationConfig cfg; cfg.max_new_tokens = 3; cfg.temperature = 0.0f;
+    auto a=m.generate_full(scratch,prompt,cfg);
     scratch.reset();
     MemPool model_pool2(512ULL*1024*1024);
     TinyModel m2(model_pool2,32,12,32,64,2);
     m2.init();
-    auto b=m2.generate_cached(scratch,prompt,3);
+    auto b=m2.generate_cached(scratch,prompt,cfg);
     bool ok=a.size()==b.size();
     if(ok) for(int i=0;i<(int)a.size();i++) if(a[i]!=b[i]) { ok=false; break; }
     chk3("kv_cache_equivalence",ok);
@@ -232,12 +261,13 @@ void bench_phase3(MemPool& model_pool, MemPool& scratch){
     TinyModel m(model_pool,1000,32,64,128,2);
     m.init();
     std::vector<int> prompt={3,4,5,6,7};
+    GenerationConfig cfg; cfg.max_new_tokens = 1; cfg.temperature = 0.0f;
     Tm3 t;
     int it=20;
     cudaDeviceSynchronize();
     t.st();
     for(int i=0;i<it;i++){
-        int nxt=m.generate_next_full(scratch,prompt);
+        int nxt=m.generate_next_full(scratch,prompt,cfg);
         (void)nxt;
     }
     float ms=t.ed()/it;
@@ -251,6 +281,7 @@ void bench_phase3(MemPool& model_pool, MemPool& scratch){
 void bench_phase4a(MemPool& model_pool, MemPool& scratch){
     int it=20;
     std::vector<int> prompt={3,4,5,6,7,8,9,10};
+    GenerationConfig cfg; cfg.max_new_tokens = 8; cfg.temperature = 0.0f;
     Tm3 t;
 
     cudaDeviceSynchronize();
@@ -259,7 +290,7 @@ void bench_phase4a(MemPool& model_pool, MemPool& scratch){
         MemPool mp(512ULL*1024*1024);
         TinyModel a(mp,1000,32,64,128,2);
         a.init();
-        auto out=a.generate_full(scratch,prompt,8);
+        auto out=a.generate_full(scratch,prompt,cfg);
         (void)out;
     }
     float ms_full=t.ed()/it;
@@ -270,7 +301,7 @@ void bench_phase4a(MemPool& model_pool, MemPool& scratch){
         MemPool mp(512ULL*1024*1024);
         TinyModel b(mp,1000,32,64,128,2);
         b.init();
-        auto out=b.generate_cached(scratch,prompt,8);
+        auto out=b.generate_cached(scratch,prompt,cfg);
         (void)out;
     }
     float ms_cached=t.ed()/it;
