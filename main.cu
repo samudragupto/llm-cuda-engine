@@ -95,8 +95,15 @@ int main(int argc, char** argv) {
     bench_phase4c(scratch);
     scratch.reset();
 
+    compare_fp32_fp16_tokens();
+
+    BenchSummary summary = run_bench_summary(scratch);
+    print_bench_summary(summary);
+    write_bench_csv(summary, "bench_results.csv");
+    printf("Wrote bench_results.csv\n\n");
+
     if (argc > 1) test_safetensors(argv[1], pool);
-    else printf("Tip: engine_p4c.exe test_model.safetensors\n");
+    else printf("Tip: engine_p4d.exe test_model.safetensors\n");
 
     TinyTokenizer tok;
 
@@ -113,10 +120,10 @@ int main(int argc, char** argv) {
     demo_scratch.reset();
     auto out2 = modelh.generate_cached(demo_scratch, prompt, 5);
 
-    printf("=== PHASE 4C DEMO ===\n");
+    printf("=== PHASE 4D DEMO ===\n");
     printf("FP32  : %s\n", tok.decode(out1).c_str());
     printf("FP16  : %s\n", tok.decode(out2).c_str());
-    printf("=== PHASE 4C COMPLETE ===\n");
+    printf("=== PHASE 4D COMPLETE ===\n");
 
     return 0;
 }

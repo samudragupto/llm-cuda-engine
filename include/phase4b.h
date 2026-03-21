@@ -29,7 +29,20 @@ struct TinyModelH {
     std::vector<int> generate_cached(MemPool& scratch, const std::vector<int>& prompt, int max_new_tokens);
 };
 
+struct BenchSummary {
+    float phase4a_fp32_cached_ms;
+    float phase4b_fp32_cached_ms;
+    float phase4b_fp16_cached_ms;
+    float phase4c_fp32_gemv_ms;
+    float phase4c_fp16_gemv_ms;
+};
+
 void test_fp16_kernels(MemPool& model_pool, MemPool& scratch);
 void test_fp16_model(MemPool& model_pool, MemPool& scratch);
 void bench_phase4b(MemPool& scratch);
 void bench_phase4c(MemPool& scratch);
+
+BenchSummary run_bench_summary(MemPool& scratch);
+void print_bench_summary(const BenchSummary& b);
+void write_bench_csv(const BenchSummary& b, const char* path);
+void compare_fp32_fp16_tokens();

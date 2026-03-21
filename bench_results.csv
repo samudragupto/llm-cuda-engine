@@ -1,0 +1,5 @@
+variant,time_ms,relative_to_4a_fp32
+4A_FP32_Cached,21.1646,1
+4B_FP16_Cached,30.0205,0.705003
+4C_FP32_GEMV,21.1646,1
+4C_FP16_GEMV,30.0205,0.705003

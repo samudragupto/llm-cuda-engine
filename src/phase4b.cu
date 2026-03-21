@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <vector>
 #include <cmath>
+#include <fstream>
 
 static int p4b_pass=0,p4b_fail=0;
 static void chk4(const char* n,bool ok){if(ok){printf("  [PASS] %s\n",n);p4b_pass++;}else{printf("  [FAIL] %s\n",n);p4b_fail++;}}
@@ -175,11 +176,10 @@ struct T4{
     float ed(){cudaEventRecord(e);cudaEventSynchronize(e);float ms;cudaEventElapsedTime(&ms,s,e);return ms;}
 };
 
-void bench_phase4b(MemPool& scratch){
+static float run_phase4a_fp32(MemPool& scratch){
     std::vector<int> prompt={3,4,5,6,7,8,9,10};
     int it=20;
     T4 t;
-
     cudaDeviceSynchronize();
     t.st();
     for(int i=0;i<it;i++){
@@ -189,8 +189,13 @@ void bench_phase4b(MemPool& scratch){
         auto out=a.generate_cached(scratch,prompt,8);
         (void)out;
     }
-    float ms_fp32=t.ed()/it;
+    return t.ed()/it;
+}
 
+static float run_phase4b_fp16(MemPool& scratch){
+    std::vector<int> prompt={3,4,5,6,7,8,9,10};
+    int it=20;
+    T4 t;
     cudaDeviceSynchronize();
     t.st();
     for(int i=0;i<it;i++){
@@ -200,8 +205,12 @@ void bench_phase4b(MemPool& scratch){
         auto out=b.generate_cached(scratch,prompt,8);
         (void)out;
     }
-    float ms_fp16=t.ed()/it;
+    return t.ed()/it;
+}
 
+void bench_phase4b(MemPool& scratch){
+    float ms_fp32=run_phase4a_fp32(scratch);
+    float ms_fp16=run_phase4b_fp16(scratch);
     printf("=== PHASE 4B TESTS ===\n");
     printf("Results: %d passed, %d failed\n\n",p4b_pass,p4b_fail);
     printf("=== PHASE 4B BENCHMARKS ===\n");
@@ -211,34 +220,77 @@ void bench_phase4b(MemPool& scratch){
 }
 
 void bench_phase4c(MemPool& scratch){
-    std::vector<int> prompt={3,4,5,6,7,8,9,10};
-    int it=20;
-    T4 t;
-
-    cudaDeviceSynchronize();
-    t.st();
-    for(int i=0;i<it;i++){
-        MemPool mp(512ULL*1024*1024);
-        TinyModel a(mp,1000,32,64,128,2);
-        a.init();
-        auto out=a.generate_cached(scratch,prompt,8);
-        (void)out;
-    }
-    float ms_fp32=t.ed()/it;
-
-    cudaDeviceSynchronize();
-    t.st();
-    for(int i=0;i<it;i++){
-        MemPool mp(512ULL*1024*1024);
-        TinyModelH b(mp,1000,32,64,128,2);
-        b.init();
-        auto out=b.generate_cached(scratch,prompt,8);
-        (void)out;
-    }
-    float ms_fp16=t.ed()/it;
-
+    float ms_fp32=run_phase4a_fp32(scratch);
+    float ms_fp16=run_phase4b_fp16(scratch);
     printf("=== PHASE 4C BENCHMARKS ===\n");
     printf("FP32 cached generate (GEMV): %.4f ms\n",ms_fp32);
     printf("FP16 cached generate (GEMV): %.4f ms\n",ms_fp16);
     printf("Speedup                  : %.2fx\n\n",ms_fp32/ms_fp16);
+}
+
+BenchSummary run_bench_summary(MemPool& scratch){
+    BenchSummary b;
+    b.phase4a_fp32_cached_ms = run_phase4a_fp32(scratch);
+    b.phase4b_fp32_cached_ms = b.phase4a_fp32_cached_ms;
+    b.phase4b_fp16_cached_ms = run_phase4b_fp16(scratch);
+    b.phase4c_fp32_gemv_ms = b.phase4a_fp32_cached_ms;
+    b.phase4c_fp16_gemv_ms = b.phase4b_fp16_cached_ms;
+    return b;
+}
+
+void print_bench_summary(const BenchSummary& b){
+    printf("=== BENCHMARK SUMMARY TABLE ===\n");
+    printf("%-28s %-12s %-12s\n","Variant","Time (ms)","Relative");
+    printf("%-28s %-12.4f %-12.2fx\n","4A FP32 Cached",b.phase4a_fp32_cached_ms,b.phase4a_fp32_cached_ms/b.phase4a_fp32_cached_ms);
+    printf("%-28s %-12.4f %-12.2fx\n","4B FP16 Cached",b.phase4b_fp16_cached_ms,b.phase4a_fp32_cached_ms/b.phase4b_fp16_cached_ms);
+    printf("%-28s %-12.4f %-12.2fx\n","4C FP32 GEMV",b.phase4c_fp32_gemv_ms,b.phase4a_fp32_cached_ms/b.phase4c_fp32_gemv_ms);
+    printf("%-28s %-12.4f %-12.2fx\n\n","4C FP16 GEMV",b.phase4c_fp16_gemv_ms,b.phase4a_fp32_cached_ms/b.phase4c_fp16_gemv_ms);
+}
+
+void write_bench_csv(const BenchSummary& b, const char* path){
+    std::ofstream f(path);
+    f<<"variant,time_ms,relative_to_4a_fp32\n";
+    f<<"4A_FP32_Cached,"<<b.phase4a_fp32_cached_ms<<","<<(b.phase4a_fp32_cached_ms/b.phase4a_fp32_cached_ms)<<"\n";
+    f<<"4B_FP16_Cached,"<<b.phase4b_fp16_cached_ms<<","<<(b.phase4a_fp32_cached_ms/b.phase4b_fp16_cached_ms)<<"\n";
+    f<<"4C_FP32_GEMV,"<<b.phase4c_fp32_gemv_ms<<","<<(b.phase4a_fp32_cached_ms/b.phase4c_fp32_gemv_ms)<<"\n";
+    f<<"4C_FP16_GEMV,"<<b.phase4c_fp16_gemv_ms<<","<<(b.phase4a_fp32_cached_ms/b.phase4c_fp16_gemv_ms)<<"\n";
+}
+
+void compare_fp32_fp16_tokens(){
+    TinyTokenizer tok;
+    MemPool scratch(512ULL*1024*1024);
+    MemPool mp1(512ULL*1024*1024);
+    MemPool mp2(512ULL*1024*1024);
+
+    TinyModel a(mp1,32,12,32,64,2);
+    TinyModelH b(mp2,32,12,32,64,2);
+    a.init();
+    b.init();
+
+    std::vector<int> prompt=tok.encode("hello world cuda");
+    auto out_fp32=a.generate_cached(scratch,prompt,5);
+    scratch.reset();
+    auto out_fp16=b.generate_cached(scratch,prompt,5);
+
+    bool same=out_fp32.size()==out_fp16.size();
+    int mismatch=-1;
+    if(same){
+        for(int i=0;i<(int)out_fp32.size();i++){
+            if(out_fp32[i]!=out_fp16[i]){same=false;mismatch=i;break;}
+        }
+    }
+
+    printf("=== FP32 vs FP16 TOKEN COMPARISON ===\n");
+    printf("FP32 ids : ");
+    for(int x:out_fp32) printf("%d ",x);
+    printf("\nFP16 ids : ");
+    for(int x:out_fp16) printf("%d ",x);
+    printf("\nFP32 txt : %s\n",tok.decode(out_fp32).c_str());
+    printf("FP16 txt : %s\n",tok.decode(out_fp16).c_str());
+    if(same) printf("Exact token match: YES\n\n");
+    else {
+        if(mismatch<0 && out_fp32.size()!=out_fp16.size()) mismatch=(int)(out_fp32.size()<out_fp16.size()?out_fp32.size():out_fp16.size());
+        printf("Exact token match: NO\n");
+        printf("First mismatch idx: %d\n\n",mismatch);
+    }
 }
