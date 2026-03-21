@@ -67,6 +67,70 @@ void bench_gemm(MemPool& pool, int M, int N, int K, int iters) {
     printf("  Custom vs cuBLAS: %.2fx (1.0 = equal)\n\n", ms_cublas / ms_tiled); 
 }
 
+void bench_wmma(MemPool& pool, int M, int N, int K, int iters) {
+    // Allocate FP32 arrays
+    Tensor A_fp32(pool, {M, K}), B_fp32(pool, {K, N}), C_fp32(pool, {M, N});
+    A_fp32.fill(1.0f); B_fp32.fill(0.5f);
+    
+    // Allocate FP16 arrays for Tensor Cores
+    half* d_A_fp16 = pool.alloc<half>(M * K);
+    half* d_B_fp16 = pool.alloc<half>(K * N); // We will pretend this is col-major for the test
+    
+    // Quick helper kernel to cast FP32 to FP16
+    int nA = M * K;
+    int nB = K * N;
+    k_fp32_to_fp16(A_fp32.data, d_A_fp16, nA);
+    k_fp32_to_fp16(B_fp32.data, d_B_fp16, nB);
+    cudaDeviceSynchronize();
+
+    cublasHandle_t handle;
+    cublasCreate(&handle);
+
+    // Warmup
+    for(int i=0; i<5; i++){
+        k_gemm_tiled(A_fp32.data, B_fp32.data, C_fp32.data, M, N, K);
+        k_gemm_wmma(d_A_fp16, d_B_fp16, C_fp32.data, M, N, K);
+    }
+    cudaDeviceSynchronize();
+
+    Timer t;
+    
+    // 1. Tiled FP32 (Your current best custom kernel)
+    t.start();
+    for (int i = 0; i < iters; i++) k_gemm_tiled(A_fp32.data, B_fp32.data, C_fp32.data, M, N, K);
+    float ms_tiled = t.stop() / iters;
+
+    // 2. WMMA Tensor Cores
+    t.start();
+    for (int i = 0; i < iters; i++) k_gemm_wmma(d_A_fp16, d_B_fp16, C_fp32.data, M, N, K);
+    float ms_wmma = t.stop() / iters;
+
+    // 3. cuBLAS Tensor Cores
+    float alpha = 1.0f, beta = 0.0f;
+    t.start();
+    for (int i = 0; i < iters; i++) {
+        cublasGemmEx(handle, CUBLAS_OP_T, CUBLAS_OP_N,
+                     N, M, K,
+                     &alpha,
+                     d_B_fp16, CUDA_R_16F, K, // Transposed B for col-major sim
+                     d_A_fp16, CUDA_R_16F, K,
+                     &beta,
+                     C_fp32.data, CUDA_R_32F, N,
+                     CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP);
+    }
+    float ms_cublas = t.stop() / iters;
+
+    cublasDestroy(handle);
+
+    double flops = 2.0 * M * N * K;
+    printf("TENSOR CORE WMMA BENCHMARK [%d x %d x %d]\n", M, N, K);
+    printf("  Custom Tiled (FP32) : %8.3f ms | %7.1f GFLOPS\n", ms_tiled, flops / (ms_tiled * 1e6));
+    printf("  Custom WMMA  (FP16) : %8.3f ms | %7.1f GFLOPS\n", ms_wmma, flops / (ms_wmma * 1e6));
+    printf("  cuBLAS WMMA  (FP16) : %8.3f ms | %7.1f GFLOPS\n", ms_cublas, flops / (ms_cublas * 1e6));
+    printf("  Speedup vs Tiled    : %.2fx\n", ms_tiled / ms_wmma);
+    printf("  Custom vs cuBLAS    : %.2fx (1.0 = equal)\n\n", ms_cublas / ms_wmma); 
+}
+
 void bench_elementwise(MemPool& pool, int n, int iters) {
     Tensor A(pool, {n}), B(pool, {n}), C(pool, {n});
     A.fill(1.0f); B.fill(2.0f);

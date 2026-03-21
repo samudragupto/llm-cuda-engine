@@ -11,6 +11,7 @@
 #include "profiler.h" 
 
 extern void bench_gemm(MemPool&, int, int, int, int);
+extern void bench_wmma(MemPool&, int, int, int, int);
 extern void bench_elementwise(MemPool&, int, int);
 extern void bench_transpose(MemPool&, int, int, int);
 extern void test_add(MemPool&);
@@ -74,8 +75,14 @@ int main(int argc, char** argv) {
     test_kv_cache_equivalence(model_pool, scratch);
     scratch.reset();
 
+    printf("=== PHASE 1 BENCHMARKS ===\n");
+    bench_elementwise(pool, 1 << 20, 100); pool.reset();
+    bench_transpose(pool, 4096, 4096, 50); pool.reset();
+    bench_gemm(pool, 1024, 1024, 1024, 20); pool.reset();
+    bench_wmma(pool, 4096, 4096, 4096, 10); pool.reset();
+
     if (argc > 1) test_safetensors(argv[1], pool);
-    else printf("Tip: engine_p1_upgrades.exe test_model.safetensors\n");
+    else printf("Tip: engine_p4_wmma.exe test_model.safetensors\n");
 
     TinyTokenizer tok;
     MemPool demo_model_pool(512ULL * 1024 * 1024);
@@ -84,16 +91,15 @@ int main(int argc, char** argv) {
     model.init();
     std::vector<int> prompt = tok.encode("hello world cuda");
     
-    // Create Configs for Greedy vs Repetition Penalized
     GenerationConfig greedy_cfg;
     greedy_cfg.max_new_tokens = 10;
-    greedy_cfg.temperature = 0.0f; // Exact reproduction
+    greedy_cfg.temperature = 0.0f;
     greedy_cfg.repetition_penalty = 1.0f;
 
     GenerationConfig penalty_cfg;
     penalty_cfg.max_new_tokens = 10;
-    penalty_cfg.temperature = 0.0f; // Keep greedy so we ONLY see the penalty effect
-    penalty_cfg.repetition_penalty = 2.0f; // Strongly penalize repeating tokens
+    penalty_cfg.temperature = 0.0f;
+    penalty_cfg.repetition_penalty = 2.0f;
 
     auto out1 = model.generate_cached(demo_scratch, prompt, greedy_cfg);
     demo_scratch.reset();
@@ -103,18 +109,17 @@ int main(int argc, char** argv) {
     printf("Greedy (No Penalty):   %s\n", tok.decode(out1).c_str());
     printf("Greedy (Rep Pen 2.0):  %s\n", tok.decode(out_penalty).c_str());
 
-    // --- PHASE 1 UPGRADES DEMO ---
     printf("\n=== PHASE 1 UPGRADES DEMO ===\n");
     demo_model_pool.print_stats("Persistent Model Pool");
     demo_scratch.print_stats("Step Scratch Pool");
 
     Profiler prof;
     prof.start("Dummy Kernel Simulation");
-    cudaDeviceSynchronize(); // simulate work
+    cudaDeviceSynchronize();
     prof.stop("Dummy Kernel Simulation");
     
     prof.start("Matrix Math Sim");
-    bench_gemm(pool, 512, 512, 512, 5); // Use existing func to simulate work
+    bench_gemm(pool, 512, 512, 512, 5);
     prof.stop("Matrix Math Sim");
     
     prof.print_summary();
