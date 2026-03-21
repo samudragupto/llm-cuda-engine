@@ -237,6 +237,20 @@ __global__ void _sample_top_p(float* probs, int* out_idx, float p, float random_
         out_idx[0] = last_idx; // Fallback
     }
 }
+// --- PHASE 3 UPGRADES: REPETITION PENALTY ---
+__global__ void _apply_repetition_penalty(float* logits, int* past_tokens, int num_past, float penalty) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i < num_past) {
+        int token_id = past_tokens[i];
+        float logit = logits[token_id];
+        // Standard HuggingFace repetition penalty math
+        if (logit > 0.0f) {
+            logits[token_id] = logit / penalty;
+        } else {
+            logits[token_id] = logit * penalty;
+        }
+    }
+}
 void k_add(float* a,float* b,float* c,int n){_add<<<(n+255)/256,256>>>(a,b,c,n);}
 void k_mul(float* a,float* b,float* c,int n){_mul<<<(n+255)/256,256>>>(a,b,c,n);}
 void k_scale(float* a,float s,float* c,int n){_scale<<<(n+255)/256,256>>>(a,s,c,n);}
@@ -275,4 +289,7 @@ void k_apply_temperature(float* logits, float temp, int vocab_size) {
 }
 void k_sample_top_p(float* probs, int* out_idx, float p, float random_val, int vocab_size) {
     _sample_top_p<<<1, 1>>>(probs, out_idx, p, random_val, vocab_size);
+}
+void k_apply_repetition_penalty(float* logits, int* past_tokens, int num_past, float penalty) {
+    _apply_repetition_penalty<<<(num_past+255)/256, 256>>>(logits, past_tokens, num_past, penalty);
 }

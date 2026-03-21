@@ -8,7 +8,7 @@
 #include "weight_loader.h"
 #include "phase2.h"
 #include "phase3.h"
-#include "profiler.h" // NEW: Profiler
+#include "profiler.h" 
 
 extern void bench_gemm(MemPool&, int, int, int, int);
 extern void bench_elementwise(MemPool&, int, int);
@@ -84,22 +84,24 @@ int main(int argc, char** argv) {
     model.init();
     std::vector<int> prompt = tok.encode("hello world cuda");
     
-    // Create Configs for Greedy vs Creative
+    // Create Configs for Greedy vs Repetition Penalized
     GenerationConfig greedy_cfg;
-    greedy_cfg.max_new_tokens = 5;
+    greedy_cfg.max_new_tokens = 10;
     greedy_cfg.temperature = 0.0f; // Exact reproduction
+    greedy_cfg.repetition_penalty = 1.0f;
 
-    GenerationConfig creative_cfg;
-    creative_cfg.max_new_tokens = 5;
-    creative_cfg.temperature = 1.5f; // Wild tokens
+    GenerationConfig penalty_cfg;
+    penalty_cfg.max_new_tokens = 10;
+    penalty_cfg.temperature = 0.0f; // Keep greedy so we ONLY see the penalty effect
+    penalty_cfg.repetition_penalty = 2.0f; // Strongly penalize repeating tokens
 
     auto out1 = model.generate_cached(demo_scratch, prompt, greedy_cfg);
     demo_scratch.reset();
-    auto out_creative = model.generate_cached(demo_scratch, prompt, creative_cfg);
+    auto out_penalty = model.generate_cached(demo_scratch, prompt, penalty_cfg);
 
     printf("\n=== DEMO ===\n");
-    printf("Greedy (Temp 0.0): %s\n", tok.decode(out1).c_str());
-    printf("Sample (Temp 1.5): %s\n", tok.decode(out_creative).c_str());
+    printf("Greedy (No Penalty):   %s\n", tok.decode(out1).c_str());
+    printf("Greedy (Rep Pen 2.0):  %s\n", tok.decode(out_penalty).c_str());
 
     // --- PHASE 1 UPGRADES DEMO ---
     printf("\n=== PHASE 1 UPGRADES DEMO ===\n");

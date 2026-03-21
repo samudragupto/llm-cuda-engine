@@ -35,6 +35,8 @@ void k_copy_row_to_cache(float* src_row, float* cache, int pos, int dim);
 
 void k_gemv(float* x, float* W, float* y, int K, int N);
 
-// NEW Phase 3 Upgrades: Sampling
 void k_apply_temperature(float* logits, float temp, int vocab_size);
 void k_sample_top_p(float* probs, int* out_idx, float p, float random_val, int vocab_size);
+
+// NEW Phase 3 Upgrade: Repetition Penalty
+void k_apply_repetition_penalty(float* logits, int* past_tokens, int num_past, float penalty);
