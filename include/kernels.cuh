@@ -1,4 +1,5 @@
 #pragma once
+#include <cuda_fp16.h>
 void k_add(float* a, float* b, float* c, int n);
 void k_mul(float* a, float* b, float* c, int n);
 void k_scale(float* a, float s, float* c, int n);
@@ -21,3 +22,10 @@ void k_row_add_bias(float* x, float* b, int rows, int cols);
 void k_copy_row_to_cache(float* src_row, float* cache, int pos, int dim);
 void k_attention_scores_one(float* q, float* K, float* s, int len, int dim);
 void k_attention_weighted_sum_one(float* p, float* V, float* o, int len, int dim);
+
+void k_fp32_to_fp16(float* src, half* dst, int n);
+void k_fp16_to_fp32(half* src, float* dst, int n);
+void k_copy_h(half* src, half* dst, int n);
+void k_embedding_lookup_h(int* ids, half* table, float* out, int seq, int dim);
+void k_row_add_bias_h(float* x, half* b, int rows, int cols);
+void k_gemm_tiled_hf(float* A, half* B, float* C, int M, int N, int K);

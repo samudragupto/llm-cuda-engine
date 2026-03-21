@@ -7,7 +7,7 @@
 #include "weight_loader.h"
 #include "phase2.h"
 #include "phase3.h"
-
+#include "phase4b.h"
 extern void bench_gemm(MemPool&, int, int, int, int);
 extern void bench_elementwise(MemPool&, int, int);
 extern void bench_transpose(MemPool&, int, int, int);
@@ -89,15 +89,15 @@ int main(int argc, char** argv) {
     TinyModel model(demo_model_pool,32,12,32,64,2);
     model.init();
     std::vector<int> prompt=tok.encode("hello world cuda");
-    auto out1=model.generate_full(demo_scratch,prompt,5);
+    auto out1=model.generate_cached(demo_scratch,prompt,5);
+
     MemPool demo_model_pool2(512ULL*1024*1024);
-    TinyModel model2(demo_model_pool2,32,12,32,64,2);
-    model2.init();
+    TinyModelH modelh(demo_model_pool2,32,12,32,64,2);
+    modelh.init();
     demo_scratch.reset();
-    auto out2=model2.generate_cached(demo_scratch,prompt,5);
-    printf("=== PHASE 4A DEMO ===\n");
-    printf("Full   : %s\n", tok.decode(out1).c_str());
-    printf("Cached : %s\n", tok.decode(out2).c_str());
-    printf("=== PHASE 4A COMPLETE ===\n");
-    return 0;
-}
+    auto out2=modelh.generate_cached(demo_scratch,prompt,5);
+
+    printf("=== PHASE 4B DEMO ===\n");
+    printf("FP32  : %s\n", tok.decode(out1).c_str());
+    printf("FP16  : %s\n", tok.decode(out2).c_str());
+    printf("=== PHASE 4B COMPLETE ===\n");
