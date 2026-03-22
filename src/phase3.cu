@@ -107,27 +107,27 @@ int TinyModel::logits_to_token(MemPool& scratch, Tensor& hidden, const std::vect
     k_gemm_tiled(hidden.data, lm_head.data, logits.data, 1, vocab, dim);
     k_row_add_bias(logits.data, lm_bias.data, 1, vocab);
 
-    // Apply Repetition Penalty
+    
     if (config.repetition_penalty != 1.0f && !past_ids.empty()) {
         IntTensor d_past(scratch, past_ids.size());
         d_past.from_host(past_ids);
         k_apply_repetition_penalty(logits.data, d_past.data, past_ids.size(), config.repetition_penalty);
     }
 
-    // Apply Temperature
+    
     if (config.temperature != 1.0f && config.temperature > 0.0f) {
         k_apply_temperature(logits.data, config.temperature, vocab);
     }
 
-    // Always apply softmax before sampling
+    
     Tensor probs(scratch, {1, vocab});
     k_row_softmax(logits.data, probs.data, 1, vocab);
 
     if (config.temperature <= 0.0f) {
-        // Greedy fallback
+        
         k_argmax_row(probs.data, out.data, 1, vocab);
     } else {
-        // Random float between 0 and 1
+        
         float rand_val = static_cast<float>(rand()) / static_cast<float>(RAND_MAX);
         k_sample_top_p(probs.data, out.data, config.top_p, rand_val, vocab);
     }
@@ -161,7 +161,7 @@ int TinyModel::generate_next_full(MemPool& scratch, const std::vector<int>& ids,
     forward_full(scratch, dids, logits, seq_len);
     k_gather_last_token(logits.data, last.data, seq_len, vocab);
 
-    // Apply Repetition Penalty
+    
     if (config.repetition_penalty != 1.0f && !ids.empty()) {
         IntTensor d_past(scratch, ids.size());
         d_past.from_host(ids);

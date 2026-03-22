@@ -22,7 +22,7 @@ struct MemPool {
     template<typename T>
     T* alloc(size_t n) {
         size_t bytes = n * sizeof(T);
-        // 256-byte alignment is optimal for strict CUDA memory access and future Tensor Cores
+        
         size_t aligned = (bytes + 255) & ~(size_t)255; 
         
         if (offset + aligned > capacity) {

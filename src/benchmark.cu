@@ -26,29 +26,29 @@ void bench_gemm(MemPool& pool, int M, int N, int K, int iters) {
     cublasHandle_t handle;
     cublasCreate(&handle);
 
-    // --- WARMUP ---
-    // Run everything a few times so the GPU is awake and cuBLAS is initialized
+    
+    
     for (int i = 0; i < 5; i++) {
         k_gemm_naive(A.data, B.data, C.data, M, N, K);
         k_gemm_tiled(A.data, B.data, C.data, M, N, K);
         k_cublas_gemm(handle, A.data, B.data, C.data, M, N, K);
     }
     cudaDeviceSynchronize();
-    // --------------
+    
 
     Timer t;
     
-    // Naive
+    
     t.start();
     for (int i = 0; i < iters; i++) k_gemm_naive(A.data, B.data, C.data, M, N, K);
     float ms_naive = t.stop() / iters;
     
-    // Tiled
+    
     t.start();
     for (int i = 0; i < iters; i++) k_gemm_tiled(A.data, B.data, C.data, M, N, K);
     float ms_tiled = t.stop() / iters;
 
-    // cuBLAS
+    
     t.start();
     for (int i = 0; i < iters; i++) k_cublas_gemm(handle, A.data, B.data, C.data, M, N, K);
     float ms_cublas = t.stop() / iters;
@@ -62,21 +62,21 @@ void bench_gemm(MemPool& pool, int M, int N, int K, int iters) {
     printf("  cuBLAS : %8.3f ms | %7.1f GFLOPS\n", ms_cublas, flops / (ms_cublas * 1e6));
     printf("  Speedup vs Naive: %.2fx\n", ms_naive / ms_tiled);
     
-    // Fixed math to properly show Custom relative to cuBLAS
-    // If Custom is 1ms and cuBLAS is 0.1ms, Custom is 0.1x the speed of cuBLAS.
+    
+    
     printf("  Custom vs cuBLAS: %.2fx (1.0 = equal)\n\n", ms_cublas / ms_tiled); 
 }
 
 void bench_wmma(MemPool& pool, int M, int N, int K, int iters) {
-    // Allocate FP32 arrays
+    
     Tensor A_fp32(pool, {M, K}), B_fp32(pool, {K, N}), C_fp32(pool, {M, N});
     A_fp32.fill(1.0f); B_fp32.fill(0.5f);
     
-    // Allocate FP16 arrays for Tensor Cores
-    half* d_A_fp16 = pool.alloc<half>(M * K);
-    half* d_B_fp16 = pool.alloc<half>(K * N); // We will pretend this is col-major for the test
     
-    // Quick helper kernel to cast FP32 to FP16
+    half* d_A_fp16 = pool.alloc<half>(M * K);
+    half* d_B_fp16 = pool.alloc<half>(K * N); 
+    
+    
     int nA = M * K;
     int nB = K * N;
     k_fp32_to_fp16(A_fp32.data, d_A_fp16, nA);
@@ -86,7 +86,7 @@ void bench_wmma(MemPool& pool, int M, int N, int K, int iters) {
     cublasHandle_t handle;
     cublasCreate(&handle);
 
-    // Warmup
+    
     for(int i=0; i<5; i++){
         k_gemm_tiled(A_fp32.data, B_fp32.data, C_fp32.data, M, N, K);
         k_gemm_wmma(d_A_fp16, d_B_fp16, C_fp32.data, M, N, K);
@@ -95,24 +95,24 @@ void bench_wmma(MemPool& pool, int M, int N, int K, int iters) {
 
     Timer t;
     
-    // 1. Tiled FP32 (Your current best custom kernel)
+    
     t.start();
     for (int i = 0; i < iters; i++) k_gemm_tiled(A_fp32.data, B_fp32.data, C_fp32.data, M, N, K);
     float ms_tiled = t.stop() / iters;
 
-    // 2. WMMA Tensor Cores
+    
     t.start();
     for (int i = 0; i < iters; i++) k_gemm_wmma(d_A_fp16, d_B_fp16, C_fp32.data, M, N, K);
     float ms_wmma = t.stop() / iters;
 
-    // 3. cuBLAS Tensor Cores
+    
     float alpha = 1.0f, beta = 0.0f;
     t.start();
     for (int i = 0; i < iters; i++) {
         cublasGemmEx(handle, CUBLAS_OP_T, CUBLAS_OP_N,
                      N, M, K,
                      &alpha,
-                     d_B_fp16, CUDA_R_16F, K, // Transposed B for col-major sim
+                     d_B_fp16, CUDA_R_16F, K, 
                      d_A_fp16, CUDA_R_16F, K,
                      &beta,
                      C_fp32.data, CUDA_R_32F, N,

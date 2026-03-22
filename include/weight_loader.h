@@ -100,10 +100,10 @@ struct SafetensorsLoader {
         }
     }
 
-    // ROBUSTNESS UPGRADE: Validate shape before loading
+    
     bool validate_shape(const std::string& name, const std::vector<int>& expected) {
         auto it = entries.find(name);
-        if (it == entries.end()) return false; // Doesn't exist
+        if (it == entries.end()) return false; 
         const auto& actual = it->second.shape;
         if (actual.size() != expected.size()) return false;
         for (size_t i = 0; i < actual.size(); i++) {

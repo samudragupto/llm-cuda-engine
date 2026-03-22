@@ -50,7 +50,7 @@ struct TinyModel {
     void forward_full(MemPool& scratch, IntTensor& ids, Tensor& logits, int seq_len);
     void prefill(MemPool& scratch, const std::vector<int>& ids, Tensor& last_hidden);
     
-    // Updated signatures matching Phase3.cu exactly
+    
     int logits_to_token(MemPool& scratch, Tensor& hidden, const std::vector<int>& past_ids, GenerationConfig config);
     int decode_next(MemPool& scratch, int token_id, int pos, const std::vector<int>& past_ids, GenerationConfig config);
     int generate_next_full(MemPool& scratch, const std::vector<int>& ids, GenerationConfig config);

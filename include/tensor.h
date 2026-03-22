@@ -5,7 +5,7 @@
 #include <cuda_runtime.h>
 #include "mem_pool.h"
 
-// Forward declaration so Tensor can use it
+
 void k_fill(float* a, float val, int n);
 
 struct Tensor {

@@ -129,6 +129,6 @@ void test_mha(MemPool& pool) {
     cudaDeviceSynchronize();
     
     std::vector<float> hs; S.to_host(hs);
-    bool masked = (hs[1] < -1e10f); // head 0, row 0, col 1 should be masked
+    bool masked = (hs[1] < -1e10f); 
     check("mha fused mask", masked);
 }
