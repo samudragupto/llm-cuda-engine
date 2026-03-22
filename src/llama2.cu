@@ -13,18 +13,32 @@ std::string LlamaTokenizer::decode(const std::vector<int>& ids) { std::string s;
 
 LlamaLayerMixed::LlamaLayerMixed(MemPool& pool, int seq, int d, int hd, int nh, int nkv) : dim(d), hidden_dim(hd), n_heads(nh), n_kv_heads(nkv), head_dim(d/nh), max_seq(seq), w_rms1(pool, {d}), w_rms2(pool, {d}), Wq(pool, {d, d}), Wk(pool, {nkv*head_dim, d}), Wv(pool, {nkv*head_dim, d}), Wo(pool, {d, d}), W1(pool, hd, d), W2(pool, hd, d), W3(pool, d, hd), k_cache(pool, {seq, nkv*head_dim}), v_cache(pool, {seq, nkv*head_dim}) {}
 
-void LlamaLayerMixed::load(FILE* f) { read_ht(f, w_rms1); read_ht(f, Wq); read_ht(f, Wk); read_ht(f, Wv); read_ht(f, Wo); read_ht(f, w_rms2); read_qt(f, W1); read_qt(f, W2); read_qt(f, W3); }
+void LlamaLayerMixed::load(FILE* f) { 
+    read_ht(f, w_rms1); read_ht(f, Wq); read_ht(f, Wk); read_ht(f, Wv); read_ht(f, Wo); 
+    read_ht(f, w_rms2); read_qt(f, W1); read_qt(f, W2); read_qt(f, W3); 
+}
 
 void LlamaLayerMixed::forward_prefill(MemPool& scratch, cublasHandle_t handle, HalfTensor& x, HalfTensor& out, int seq) {
     int hd = head_dim; HalfTensor xn(scratch, {seq, dim}), Q(scratch, {seq, dim}), K(scratch, {seq, n_kv_heads * hd}), V(scratch, {seq, n_kv_heads * hd}), A(scratch, {seq, dim}), AO(scratch, {seq, dim}), fn(scratch, {seq, dim}), gate(scratch, {seq, hidden_dim}), up(scratch, {seq, hidden_dim}), swi(scratch, {seq, hidden_dim}), F(scratch, {seq, dim});
     k_half_rmsnorm(x.data, w_rms1.data, xn.data, seq, dim, 1e-5f);
-    k_half_linear(handle, xn.data, Wq.data, Q.data, seq, dim, dim); k_half_linear(handle, xn.data, Wk.data, K.data, seq, dim, n_kv_heads*hd); k_half_linear(handle, xn.data, Wv.data, V.data, seq, dim, n_kv_heads*hd);
+    
+    k_half_linear(handle, xn.data, Wq.data, Q.data, seq, dim, dim);
+    k_half_linear(handle, xn.data, Wk.data, K.data, seq, dim, n_kv_heads*hd);
+    k_half_linear(handle, xn.data, Wv.data, V.data, seq, dim, n_kv_heads*hd);
+    
     k_half_llama_rope(Q.data, seq, n_heads, hd, 0); k_half_llama_rope(K.data, seq, n_kv_heads, hd, 0);
     k_half_copy_block_to_cache(K.data, k_cache.data, 0, seq, n_kv_heads * hd); k_half_copy_block_to_cache(V.data, v_cache.data, 0, seq, n_kv_heads * hd);
+    
+    // 🔥 PURE SRAM FLASH ATTENTION
     k_flash_attention_prefill(Q.data, K.data, V.data, A.data, seq, n_heads, n_kv_heads, hd);
+    
     k_half_linear(handle, A.data, Wo.data, AO.data, seq, dim, dim);
     k_half_fused_add_rmsnorm(x.data, AO.data, w_rms2.data, fn.data, seq, dim, 1e-5f);
-    for(int i=0; i<seq; i++) { k_int8_gemv(fn.data + i*dim, W1.data, W1.scales, gate.data + i*hidden_dim, dim, hidden_dim); k_int8_gemv(fn.data + i*dim, W2.data, W2.scales, up.data + i*hidden_dim, dim, hidden_dim); }
+    
+    for(int i=0; i<seq; i++) {
+        k_int8_gemv(fn.data + i*dim, W1.data, W1.scales, gate.data + i*hidden_dim, dim, hidden_dim);
+        k_int8_gemv(fn.data + i*dim, W2.data, W2.scales, up.data + i*hidden_dim, dim, hidden_dim);
+    }
     k_half_swiglu(gate.data, up.data, swi.data, seq * hidden_dim);
     for(int i=0; i<seq; i++) k_int8_gemv(swi.data + i*hidden_dim, W3.data, W3.scales, F.data + i*dim, hidden_dim, dim);
     k_half_add(x.data, F.data, out.data, seq * dim);
@@ -39,6 +53,7 @@ void LlamaLayerMixed::forward_decode(MemPool& scratch, HalfTensor& x, HalfTensor
     k_half_mha_scores_one(Q.data, k_cache.data, S.data, pos, n_heads, n_kv_heads, hd);
     k_row_softmax(S.data, P.data, n_heads, pos + 1);
     k_half_mha_weighted_sum_one(P.data, v_cache.data, A.data, pos, n_heads, n_kv_heads, hd);
+
     k_half_gemv(A.data, Wo.data, AO.data, dim, dim);
     k_half_fused_add_rmsnorm(x.data, AO.data, w_rms2.data, fn.data, 1, dim, 1e-5f);
     k_int8_gemv(fn.data, W1.data, W1.scales, gate.data, dim, hidden_dim); k_int8_gemv(fn.data, W2.data, W2.scales, up.data, dim, hidden_dim);
@@ -81,7 +96,7 @@ int Llama2Mixed::decode_next(MemPool& scratch, int pos, const GenerationConfig& 
 }
 
 void Llama2Mixed::chat(MemPool& scratch, const std::vector<int>& prompt_ids, GenerationConfig cfg) {
-    printf("\n[TinyLlama INT8-Mixed]: "); std::vector<int> past;
+    printf("\n[TinyLlama INT8 + FlashAttention v2]: "); std::vector<int> past;
     for(int id : prompt_ids) { printf("%s", tokenizer.decode(id).c_str()); fflush(stdout); past.push_back(id); }
     auto t0 = std::chrono::high_resolution_clock::now();
     std::vector<int> prefill_ids(prompt_ids.begin(), prompt_ids.end() - 1);
@@ -97,6 +112,15 @@ void Llama2Mixed::chat(MemPool& scratch, const std::vector<int>& prompt_ids, Gen
     }
     printf("\n");
     auto t2 = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> pt = t1 - t0;
     std::chrono::duration<double> dt = t2 - t1;
-    printf("\n[Decode Speed: %.2f tok/s]\n", tokens_generated / dt.count());
+    
+    printf("\n========================================\n");
+    printf(" PREFILL VS DECODE BENCHMARK\n");
+    printf("========================================\n");
+    printf(" Prompt Tokens    : %zu\n", prompt_ids.size());
+    printf(" Prefill Time     : %.3f sec (%.2f tok/s)\n", pt.count(), prompt_ids.size() / pt.count());
+    printf(" Generated Tokens : %d\n", tokens_generated);
+    printf(" Decode Speed     : %.2f tok/s\n", tokens_generated / dt.count());
+    printf("========================================\n");
 }
