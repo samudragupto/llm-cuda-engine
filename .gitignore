@@ -1,13 +1,5 @@
-# Build outputs
 *.exe
-*.exp
-*.lib
-*.ilk
-*.pdb
-
-# Model weights and test data
 *.bin
 *.safetensors
-
-# VS Code
+__pycache__/
 .vscode/

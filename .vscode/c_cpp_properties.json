@@ -1,15 +1,18 @@
 {
     "configurations": [
         {
-            "name": "CUDA",
+            "name": "Win32",
             "includePath": [
                 "${workspaceFolder}/**",
-                "${workspaceFolder}/include",
-                "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/**"
+                "${workspaceFolder}/include"
             ],
-            "defines": [],
-            "compilerPath": "",
-            "cStandard": "c11",
+            "defines": [
+                "_DEBUG",
+                "UNICODE",
+                "_UNICODE"
+            ],
+            "compilerPath": "nvcc",
+            "cStandard": "c17",
             "cppStandard": "c++17",
             "intelliSenseMode": "windows-msvc-x64"
         }
