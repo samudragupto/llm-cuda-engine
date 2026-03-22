@@ -121,9 +121,11 @@ void test_mha(MemPool& pool) {
     Tensor S(pool, {n_heads, seq, seq}), P(pool, {n_heads, seq, seq}), O(pool, {seq, n_heads, head_dim});
     Q.fill(1.0f); K.fill(1.0f); V.fill(1.0f);
     
-    k_mha_scores_fused_mask(Q.data, K.data, S.data, seq, n_heads, head_dim);
+    k_mha_scores_fused_mask(Q.data, K.data, S.data, seq, n_heads, n_heads, head_dim);
+
     k_row_softmax(S.data, P.data, n_heads*seq, seq);
-    k_mha_weighted_sum(P.data, V.data, O.data, seq, n_heads, head_dim);
+    k_mha_weighted_sum(P.data, V.data, O.data, seq, n_heads, n_heads, head_dim);
+
     cudaDeviceSynchronize();
     
     std::vector<float> hs; S.to_host(hs);

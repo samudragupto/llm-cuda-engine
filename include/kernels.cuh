@@ -53,3 +53,6 @@ void k_half_embedding_lookup(int* ids, half* table, half* out, int seq, int dim)
 void k_half_copy_block_to_cache(half* src, half* cache, int pos_base, int seq_len, int dim);
 void k_half_copy(half* src, half* dst, int n);
 void k_half_to_float(half* src, float* dst, int n);
+void k_cublas_gemm(cublasHandle_t handle, float* A, float* B, float* C, int M, int N, int K);
+void k_gemm_wmma(half* A, half* B, float* C, int M, int N, int K);
+void k_fp32_to_fp16(float* src, half* dst, int n);
