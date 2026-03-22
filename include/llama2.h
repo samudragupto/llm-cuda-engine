@@ -6,7 +6,6 @@
 #include "tensor.h"
 #include "mem_pool.h"
 
-// Phase 3 Upgrade: Full Generation Config API
 struct GenerationConfig {
     int max_new_tokens = 50;
     float temperature = 0.7f;
@@ -15,17 +14,13 @@ struct GenerationConfig {
 };
 
 struct HalfTensor {
-    half* data;
-    int numel;
-    std::vector<int> shape;
+    half* data; int numel; std::vector<int> shape;
     HalfTensor(MemPool& pool, std::vector<int> s);
 };
 
 struct LlamaTokenizer {
-    std::vector<std::string> vocab;
-    void load(const char* path);
-    std::string decode(int id);
-    std::string decode(const std::vector<int>& ids);
+    std::vector<std::string> vocab; void load(const char* path);
+    std::string decode(int id); std::string decode(const std::vector<int>& ids);
 };
 
 struct LlamaLayerFP16 {
@@ -34,7 +29,10 @@ struct LlamaLayerFP16 {
 
     LlamaLayerFP16(MemPool& pool, int seq, int d, int hd, int nh, int nkv);
     void load(FILE* f);
-    void forward_one(MemPool& scratch, cublasHandle_t handle, HalfTensor& x, HalfTensor& out, int pos);
+    
+    // --- PREFILL vs DECODE SPLIT ---
+    void forward_prefill(MemPool& scratch, cublasHandle_t handle, HalfTensor& x, HalfTensor& out, int seq_len);
+    void forward_decode(MemPool& scratch, HalfTensor& x, HalfTensor& out, int pos);
 };
 
 struct Llama2FP16 {
@@ -46,7 +44,9 @@ struct Llama2FP16 {
 
     Llama2FP16(MemPool& pool);
     void load_weights(const char* path);
-    // Updated to accept config and past tokens for sampling/repetition penalty
-    int generate_next(MemPool& scratch, int token_id, int pos, const GenerationConfig& cfg, const std::vector<int>& past_tokens);
+    
+    // --- PREFILL vs DECODE SPLIT ---
+    void prefill(MemPool& scratch, const std::vector<int>& prompt_ids);
+    int decode_next(MemPool& scratch, int pos, const GenerationConfig& cfg, const std::vector<int>& past_tokens);
     void chat(MemPool& scratch, const std::vector<int>& prompt_ids, GenerationConfig cfg);
 };
