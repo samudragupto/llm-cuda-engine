@@ -1,28 +1,55 @@
 #pragma once
 #include <vector>
+#include <cuda_fp16.h>
+#include <cstdint>
 #include <cuda_runtime.h>
-#include "cuda_check.h"
 #include "mem_pool.h"
+
+// Forward declaration so Tensor can use it
+void k_fill(float* a, float val, int n);
+
 struct Tensor {
-    float* data;
-    std::vector<int> shape;
-    size_t numel;
-    Tensor() : data(nullptr), numel(0) {}
-    Tensor(MemPool& pool, std::vector<int> s) : shape(s) {
-        numel = 1;
-        for (int d : s) numel *= (size_t)d;
-        data = pool.alloc<float>(numel);
+    float* data; int numel; std::vector<int> shape;
+    Tensor(MemPool& pool, std::vector<int> s) : shape(s) { 
+        numel = 1; for (int d : s) numel *= d; data = pool.alloc<float>(numel); 
+    }
+    void from_host(const std::vector<float>& h_data) {
+        cudaMemcpy(data, h_data.data(), numel * sizeof(float), cudaMemcpyHostToDevice);
+    }
+    void to_host(std::vector<float>& h_data) {
+        h_data.resize(numel);
+        cudaMemcpy(h_data.data(), data, numel * sizeof(float), cudaMemcpyDeviceToHost);
     }
     void fill(float val) {
-        std::vector<float> h(numel, val);
-        CUDA_CHECK(cudaMemcpy(data, h.data(), numel * sizeof(float), cudaMemcpyHostToDevice));
+        k_fill(data, val, numel);
     }
-    void to_host(std::vector<float>& out) {
-        out.resize(numel);
-        CUDA_CHECK(cudaMemcpy(out.data(), data, numel * sizeof(float), cudaMemcpyDeviceToHost));
+};
+
+struct IntTensor {
+    int* data; int numel; std::vector<int> shape;
+    IntTensor(MemPool& pool, std::vector<int> s) : shape(s) { 
+        numel = 1; for (int d : s) numel *= d; data = pool.alloc<int>(numel); 
     }
-    void from_host(const std::vector<float>& in) {
-        CUDA_CHECK(cudaMemcpy(data, in.data(), in.size() * sizeof(float), cudaMemcpyHostToDevice));
+    void from_host(const std::vector<int>& h_data) {
+        cudaMemcpy(data, h_data.data(), numel * sizeof(int), cudaMemcpyHostToDevice);
     }
-    int dim(int i) { return shape[i]; }
+    void to_host(std::vector<int>& h_data) {
+        h_data.resize(numel);
+        cudaMemcpy(h_data.data(), data, numel * sizeof(int), cudaMemcpyDeviceToHost);
+    }
+};
+
+struct HalfTensor {
+    half* data; int numel; std::vector<int> shape;
+    HalfTensor(MemPool& pool, std::vector<int> s) : shape(s) { 
+        numel = 1; for (int d : s) numel *= d; data = pool.alloc<half>(numel); 
+    }
+};
+
+struct QuantizedTensor {
+    int8_t* data; half* scales; int rows, cols;
+    QuantizedTensor(MemPool& pool, int r, int c) : rows(r), cols(c) {
+        data = pool.alloc<int8_t>(r * c);
+        scales = pool.alloc<half>(r);
+    }
 };
